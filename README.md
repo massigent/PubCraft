@@ -11,7 +11,9 @@ PubCraft is a free, open-source book-writing and publishing tool for authors who
 
 ![PubCraft writing a sample chapter in Markdown beside its styled book preview](docs/media/pubcraft-editor.png)
 
-**[Download PubCraft](https://github.com/massigent/PubCraft/releases)** · **[Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)** · [Contribute](CONTRIBUTING.md) · [Italiano](README.it.md)
+**Download now:** [Windows installer (.exe)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-Setup-1.0.0-alpha.1.exe) · [macOS app (.dmg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.dmg) · [Linux AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-x86_64.AppImage) · [All downloads](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.1)
+
+[Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md) · [Contribute](CONTRIBUTING.md) · [Italiano](README.it.md)
 
 ## Why PubCraft?
 
@@ -26,9 +28,15 @@ You may have a book in Vellum and want to keep editing it without depending on V
 
 ## Downloads
 
-Get the latest pre-release from **[GitHub Releases](https://github.com/massigent/PubCraft/releases)**. Download assets will be listed there only after they have been rebuilt and checked for that release. The GitHub “Source code” archives are not installers.
+Choose the download for your computer:
 
-The project targets macOS x86_64, Windows x64, and Linux x64. Apple Silicon users may need Rosetta for the current macOS build; native arm64 support is not included in this alpha. Alpha builds may differ in platform support and testing; read the release notes and use only a package explicitly listed for your system. macOS may show an unidentified-developer warning because early builds are not notarized. Linux PDF export may require Chromium or another supported renderer.
+- **Windows 64-bit:** [Download installer (.exe)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-Setup-1.0.0-alpha.1.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-windows-x64.zip)
+- **macOS Intel:** [Download app disk image (.dmg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.dmg) · [Installer package (.pkg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.pkg)
+- **Linux 64-bit:** [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-x86_64.AppImage) · [Debian/Ubuntu package (.deb)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-linux-amd64.deb) · [Portable archive (.tar.gz)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-linux-x64.tar.gz)
+
+[All release notes and files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.1) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/checksums-sha256.txt). GitHub's separate “Source code” archives contain code, not ready-to-run apps.
+
+This alpha targets macOS x86_64, Windows x64, and Linux x64. Apple Silicon users may need Rosetta; native arm64 macOS is not included. macOS may warn that the app is from an unidentified developer because this build is not notarized. Alpha packages and platform testing may differ; read the release notes. Linux PDF export may require Chromium or another supported renderer.
 
 ## Getting started
 
