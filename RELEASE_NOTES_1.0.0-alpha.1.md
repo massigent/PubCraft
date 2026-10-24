@@ -1,13 +1,15 @@
 # PubCraft 1.0.0-alpha.1
 
+## Download / Scarica
+
+- **Windows x64:** [Installer (.exe)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-Setup-1.0.0-alpha.1.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-windows-x64.zip)
+- **macOS Intel:** [App (.dmg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.dmg) · [Installer (.pkg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.pkg) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-macos.tar.gz)
+- **Linux x64:** [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-x86_64.AppImage) · [Debian/Ubuntu (.deb)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-linux-x64.tar.gz)
+- [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/checksums-sha256.txt)
+
+The same files are attached in the **Assets** section at the bottom of this release page.
+
 PubCraft is an early, free and open-source tool for writing and publishing books from portable Markdown projects. This first public alpha invites writers and contributors to try the workflow and report problems.
-
-## Downloads
-
-- **macOS Intel (x86_64):** `.dmg`, `.pkg`, or manual `.tar.gz`
-- **Windows x64:** portable `.zip` or installer `.exe`
-- **Linux x64:** `.tar.gz`, Debian/Ubuntu `.deb`, or `.AppImage`
-- `checksums-sha256.txt`: SHA-256 checksums for the release assets
 
 Apple Silicon Macs may require Rosetta. The macOS app and Windows installer are not signed/notarized; your operating system may show a security warning. Download only from this GitHub release and review the checksums.
 
