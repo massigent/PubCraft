@@ -1,0 +1,7 @@
+# Top comment
+title: "L'Arte della Guerra" # unquoted inline comment
+author: 'Sun Tzu' # unquoted inline comment
+language: "zh"
+chapters:
+  - file: "01.md" # chapter file comment
+    title: 'Capitolo dell''Inizio'

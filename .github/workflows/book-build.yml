@@ -1,0 +1,100 @@
+name: Book-as-Code (PubCraft)
+
+# Workflow opzionale per repository che contengono un book.yaml; non è la CI dell'app.
+on:
+  workflow_dispatch:
+    inputs:
+      vault_dir:
+        description: 'Percorso della cartella vault (lascia vuoto per rilevamento automatico)'
+        required: false
+        default: ''
+      trim:
+        description: 'Formato trim KDP (es. 5x8, 5.5x8.5, 6x9, 7x10)'
+        required: false
+        default: '6x9'
+      pages:
+        description: 'Stima pagine per il calcolo del gutter KDP'
+        required: false
+        default: '150'
+      bleed:
+        description: 'Abilita bordo pieno / bleed (+0.125" / +0.250")'
+        type: boolean
+        required: false
+        default: false
+permissions:
+  contents: read
+
+jobs:
+  build-book:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Installa dipendenze (C compiler, Chromium headless, Zip)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zip chromium-browser fonts-liberation
+
+      - name: Compila PubCraft CLI nativo
+        run: |
+          make build/pubcraft
+          chmod +x build/pubcraft
+
+      - name: Rileva cartella vault
+        id: vault
+        run: |
+          INPUT_DIR="${{ github.event.inputs.vault_dir }}"
+          if [ -n "$INPUT_DIR" ] && [ -f "$INPUT_DIR/book.yaml" ]; then
+            VAULT="$INPUT_DIR"
+          elif [ -f "book.yaml" ]; then
+            VAULT="."
+          else
+            VAULT=$(find . -maxdepth 2 -name "book.yaml" -printf '%h\n' | head -n 1)
+          fi
+          if [ -z "$VAULT" ] || [ ! -f "$VAULT/book.yaml" ]; then
+            echo "::error::Nessun vault valido trovato con book.yaml"
+            exit 1
+          fi
+          echo "vault_path=$VAULT" >> "$GITHUB_OUTPUT"
+          echo "Vault rilevato: $VAULT"
+
+      - name: Prepara cartella output
+        run: |
+          mkdir -p dist
+
+      - name: Compila EPUB Kindle KDP
+        run: |
+          VAULT="${{ steps.vault.outputs.vault_path }}"
+          ./build/pubcraft build "$VAULT" dist/libro-kindle.epub --kindle
+
+      - name: Compila Export Stampa HTML
+        run: |
+          VAULT="${{ steps.vault.outputs.vault_path }}"
+          TRIM="${{ github.event.inputs.trim || '6x9' }}"
+          PAGES="${{ github.event.inputs.pages || '150' }}"
+          BLEED_FLAG=""
+          if [ "${{ github.event.inputs.bleed }}" = "true" ]; then
+            BLEED_FLAG="--bleed"
+          fi
+          ./build/pubcraft build-print "$VAULT" dist/out-stampa --trim "$TRIM" --pages "$PAGES" $BLEED_FLAG
+
+      - name: Genera PDF KDP Print-Ready con Chromium Headless
+        run: |
+          chromium-browser \
+            --headless \
+            --disable-gpu \
+            --no-sandbox \
+            --run-all-compositor-stages-before-draw \
+            --print-to-pdf=dist/libro-stampa-kdp.pdf \
+            dist/out-stampa/print.html
+          echo "PDF generato: $(ls -lh dist/libro-stampa-kdp.pdf)"
+
+      - name: Archivia artefatti di pubblicazione
+        uses: actions/upload-artifact@v4
+        with:
+          name: pubcraft-published-book
+          path: |
+            dist/libro-kindle.epub
+            dist/libro-stampa-kdp.pdf
+            dist/out-stampa/print.html

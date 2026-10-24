@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self';">
+<title>PubCraft</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css?v=1.0.6">
+<link id="favicon" rel="icon" type="image/png" href="/static/favicon.png?v=1.0.6">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand-group">
+    <div class="brand" id="appBrand">Pub<span>Craft</span></div>
+    <div id="topbarBookHeader" class="topbar-book-header hidden">
+      <span class="topbar-title-sep">/</span>
+      <span id="topbarBookTitle" class="topbar-book-title" title="Click to rename book" data-i18n-title="topbar_title_tooltip">—</span>
+      <input type="text" id="topbarBookTitleInput" class="topbar-book-title-input hidden" />
+    </div>
+  </div>
+  <div class="tools">
+    <!-- Gruppo Iniziale (visibile solo quando NON c'è un libro aperto) -->
+    <div id="groupWelcome" class="tb-group">
+      <button id="btnNewProject" class="cta" data-i18n="btn_new_project" data-i18n-title="btn_new_project_title" title="Create a new book project (folder and book.yaml)">✨ New Book…</button>
+      <button id="btnOpen"       data-i18n="btn_open" data-i18n-title="btn_open_title" title="Open an existing book folder or import a file">Open…</button>
+      <button id="btnTopbarRecents" class="hidden" data-i18n="topbar_recents" data-i18n-title="topbar_recents_title" title="Open recent projects and launcher">📚 Recent Files</button>
+    </div>
+
+    <!-- Gruppo Scrittura & Contenuti (visibile solo a LIBRO APERTO) -->
+    <div id="groupEditing" class="tb-group hidden">
+      <button id="btnCloseBook" class="tb-back-btn" data-i18n="topbar_close_book" data-i18n-title="topbar_close_book_title" title="Close current book">← Close Book</button>
+      <span class="sep"></span>
+      <button id="btnNew"        class="cta" data-i18n="btn_new_chapter" data-i18n-title="btn_new_chapter_title" title="New chapter in open book">＋ New Chapter</button>
+      <span class="sep"></span>
+      <div class="dropdown" id="styleMenu">
+        <button id="btnStyle" class="tb-subtle-btn" data-i18n-title="btn_style_title" title="Book style: applies to print, PDF, and preview">Style: — ▾</button>
+        <div class="menu hidden" id="styleList"></div>
+      </div>
+      <div class="dropdown" id="openingMenu">
+        <button id="btnOpening" class="tb-subtle-btn" data-i18n-title="btn_opening_title" title="Chapter opening: drop cap, small caps, or plain">Opening: — ▾</button>
+        <div class="menu hidden" id="openingList"></div>
+      </div>
+    </div>
+
+    <!-- Gruppo Esportazione & Anteprima (visibile solo a LIBRO APERTO, visivamente discreto) -->
+    <div id="groupExport" class="tb-group hidden">
+      <span class="sep"></span>
+      <button id="btnPubPreview" class="tb-preview-btn" data-i18n="btn_pub_preview" data-i18n-title="btn_pub_preview_title" title="Open publication preview (real EPUB and print PDF)">📖 Preview…</button>
+      <div class="tb-export-cluster" title="Esportazione libro">
+        <button id="btnPrint"   class="tb-export-btn" data-i18n="btn_print" data-i18n-title="btn_print_title" title="Generate print.html and PDF for printing">Print / PDF…</button>
+        <button id="btnKindle"  class="tb-export-btn" data-i18n="btn_kindle" data-i18n-title="btn_kindle_title" title="Generate EPUB for Kindle (KDP)">Kindle EPUB</button>
+        <button id="btnWatch"   class="tb-export-btn" data-i18n="btn_watch" data-i18n-title="btn_watch_title" title="Open synchronized real-time print preview">👁️ Watch</button>
+      </div>
+    </div>
+
+    <div class="tb-spacer"></div>
+
+    <div class="tb-meta-group">
+      <div id="saveState" class="idle hidden" data-i18n="save_ready">Ready</div>
+      <div class="lang-selector">
+        <select id="langSelect" aria-label="Language" title="Language / Lingua">
+          <option value="en">🇬🇧 English</option>
+          <option value="es">🇪🇸 Español</option>
+          <option value="fr">🇫🇷 Français</option>
+          <option value="de">🇩🇪 Deutsch</option>
+          <option value="it">🇮🇹 Italiano</option>
+          <option value="pt">🇵🇹 Português</option>
+          <option value="zh">🇨🇳 简体中文</option>
+          <option value="ja">🇯🇵 日本語</option>
+          <option value="ru">🇷🇺 Русский</option>
+          <option value="ar">🇸🇦 العربية</option>
+        </select>
+      </div>
+      <button type="button" id="btnToggleTheme" class="tb-subtle-btn" data-i18n-title="theme_toggle_title" title="Alterna tema Scuro / Chiaro">
+        <span id="themeToggleIcon">🌙</span> <span id="themeToggleLabel" data-i18n="theme_dark">Dark</span>
+      </button>
+      <button type="button" id="btnReportIssue" class="tb-subtle-btn" data-i18n-title="btn_report_issue_title" title="Report an issue or diagnostic problem">🛠️ <span data-i18n="btn_report_issue">Report Issue</span></button>
+    </div>
+  </div>
+</header>
+
+<main id="app">
+
+  <nav id="sidebar">
+    <div id="bookInfo">
+      <h1 id="bookTitle">—</h1>
+      <div id="bookAuthor" class="muted"></div>
+    </div>
+    <ul id="chapterList"></ul>
+    <div id="notebookSection" class="collapsed">
+      <div class="sidehead" id="notebookHead" title="Appunti e idee legati a questo libro" data-i18n-title="notebook_section_tooltip">
+        <span>📓 <span data-i18n="notebook_header">Notebook</span> <span id="noteBadge" class="note-count-badge hidden">0</span></span>
+        <span class="arrow" id="notebookArrow">▸</span>
+      </div>
+      <div id="notebookBody" class="hidden">
+        <ul id="noteList" class="note-list"></ul>
+        <button type="button" id="btnAddNote" class="sidebtn" data-i18n="btn_add_note">＋ New Note…</button>
+      </div>
+    </div>
+    <div id="coverSection" class="collapsed">
+      <div class="sidehead" id="coverHead"><span data-i18n="covers_header">Covers</span> <span class="arrow">▸</span></div>
+      <ul id="coverList"></ul>
+      <button id="btnAddCover" class="sidebtn" data-i18n="btn_add_cover">＋ Add…</button>
+    </div>
+  </nav>
+
+  <section id="editor">
+    <div id="empty" class="welcome-screen">
+      <div class="welcome-container">
+        <!-- Colonna Sinistra: Brand, Informazioni, Azioni Primarie -->
+        <div class="welcome-brand-pane">
+          <div class="welcome-logo-box">
+            <img class="welcome-app-logo" src="/static/pubcraft.png" alt="PubCraft Logo" width="84" height="84" />
+            <h1 class="welcome-title">PUBCRAFT</h1>
+            <div class="welcome-version" data-i18n="welcome_version">Version 1.0.0-alpha.1</div>
+          </div>
+
+          <div class="welcome-divider"></div>
+
+          <div class="welcome-links">
+            <button type="button" class="welcome-link-btn" id="btnWelcomeTutorial">
+              <span class="welcome-link-icon">📖</span>
+              <span data-i18n="welcome_tutorial_link">Show PubCraft Tutorial</span>
+            </button>
+            <button type="button" class="welcome-link-btn" id="btnWelcomeShortcuts">
+              <span class="welcome-link-icon">❓</span>
+              <span data-i18n="welcome_shortcuts_link">Open Help &amp; Shortcuts</span>
+            </button>
+          </div>
+
+          <div class="welcome-divider"></div>
+
+          <div class="welcome-primary-actions">
+            <button type="button" class="welcome-action-btn cta" id="btnWelcomeNew" data-i18n="welcome_btn_new">✨ New Book…</button>
+            <button type="button" class="welcome-action-btn" id="btnWelcomeDocx" data-i18n="welcome_btn_docx">📄 Import Manuscript (.docx, .vellum, .md)…</button>
+            <button type="button" class="welcome-action-btn" id="btnWelcomeBrowse" data-i18n="welcome_btn_browse">📁 Open Existing Folder…</button>
+          </div>
+        </div>
+
+        <!-- Colonna Destra: Progetti Recenti e Cartella di Lavoro -->
+        <div class="welcome-recents-pane">
+          <div class="welcome-recents-header">
+            <div class="welcome-recents-title-row">
+              <div class="welcome-recents-heading-group">
+                <h2 class="welcome-recents-heading" data-i18n="recents_header">Recent Files</h2>
+                <button type="button" id="btnPruneMissingRecents" class="welcome-prune-btn hidden" title="Rimuovi dall'elenco i libri non più presenti sul disco" data-i18n-title="recents_prune_title">
+                  🧹 <span data-i18n="recents_prune_missing">Pulisci non trovati</span>
+                </button>
+              </div>
+              <div class="welcome-search-box">
+                <input type="text" id="recentsSearchInput" class="welcome-search-input" data-i18n-placeholder="recents_search_placeholder" placeholder="Filter projects…" />
+              </div>
+            </div>
+
+            <div class="welcome-workspace-bar">
+              <div class="welcome-ws-info">
+                <span class="welcome-ws-icon">📂</span>
+                <span class="welcome-ws-label" data-i18n="recents_workspace_label">Workspace:</span>
+                <span class="welcome-ws-path" id="welcomeWsPath">—</span>
+              </div>
+              <button type="button" class="welcome-ws-change-btn" id="btnWelcomeChangeWs" data-i18n="recents_change_workspace">Change…</button>
+            </div>
+
+            <div class="welcome-tabs">
+              <button type="button" class="welcome-tab active" id="tabRecentsAll" data-i18n="recents_all_tab">All Recents</button>
+              <button type="button" class="welcome-tab" id="tabRecentsWorkspace" data-i18n="recents_workspace_tab">In Workspace</button>
+            </div>
+          </div>
+
+          <div class="welcome-recents-list-wrap">
+            <div id="welcomeRecentList" class="welcome-recents-list" role="listbox"></div>
+            <div id="welcomeEmptyRecents" class="welcome-empty-recents hidden">
+              <div class="welcome-empty-icon">📖</div>
+              <h3 data-i18n="recents_empty_title">No recent books</h3>
+              <p data-i18n="recents_empty_desc">Create a new book or open a folder to start writing.</p>
+            </div>
+          </div>
+
+          <div class="welcome-recents-footer">
+            <button type="button" class="welcome-footer-btn subtle" id="btnClearAllRecents" data-i18n="recents_btn_clear_all">Svuota elenco</button>
+            <div class="welcome-footer-right">
+              <button type="button" class="welcome-footer-btn" id="btnWelcomeOpenOther" data-i18n="recents_btn_open_other">Open Other…</button>
+              <button type="button" class="welcome-footer-btn cta" id="btnWelcomeOpenSelected" data-i18n="recents_btn_open_selected" disabled>Open Selected</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="doc" hidden>
+      <div class="docbar">
+        <div class="chapterName" id="curName">—</div>
+        <div class="wc" id="wordCount">0 words</div>
+        <div class="viewToggle">
+          <button id="vwEdit" class="on" data-i18n="vw_editor">Editor</button>
+          <button id="vwSplit" data-i18n="vw_split">Editor + Preview</button>
+          <button id="vwPrev" data-i18n="vw_preview">Preview</button>
+          <button type="button" id="btnToggleNotebook" class="tb-notebook-toggle" data-i18n="btn_toggle_notebook" title="Open Book Notebook">📓 Notes</button>
+          <button type="button" id="btnFocusMode" class="tb-focus-toggle" data-i18n-title="btn_focus_mode_title" title="Distraction-Free Focus Mode (F11 or Esc to exit)">🧘 <span data-i18n="btn_focus_mode">Focus</span></button>
+        </div>
+      </div>
+      <!-- HUD Modalità Non Disturbo / Focus Mode -->
+      <div id="focusHud" class="focus-hud hidden">
+        <div class="focus-hud-info">
+          <div class="focus-chapter-picker" title="Seleziona capitolo" data-i18n-title="focus_select_chapter_title">
+            <span class="focus-chapter-icon">📖</span>
+            <select id="focusChapterSelect" class="focus-chapter-select" title="Seleziona capitolo"></select>
+            <span id="focusChapterTitle" class="focus-hud-title hidden">—</span>
+          </div>
+          <span class="focus-hud-sep">•</span>
+          <span id="focusWordCount" class="focus-hud-wc">0 words</span>
+          <span class="focus-hud-sep">•</span>
+          <span id="focusSaveStatus" class="focus-hud-status"></span>
+        </div>
+        <div class="focus-hud-actions">
+          <button type="button" id="btnFocusTheme" class="focus-hud-btn" title="Alterna tema Scuro / Chiaro" data-i18n-title="theme_toggle_title">
+            <span id="focusThemeLabel">🌙 Dark</span>
+          </button>
+          <button type="button" id="btnFocusDim" class="focus-hud-btn" title="Alterna modalità Focus: Spento / Frase / Paragrafo (stile iA Writer)" data-i18n-title="focus_dim_title">
+            <span id="focusDimLabel">👁️ Focus: Spento</span>
+          </button>
+          <button type="button" id="btnSuperFocus" class="focus-hud-btn" title="Alterna modalità Super Focus (scorrimento continuo al centro stile iA Writer)" data-i18n-title="focus_toggle_super_focus_title">
+            <span id="superFocusLabel">🎯 Super Focus</span>
+          </button>
+          <button type="button" id="btnFocusFont" class="focus-hud-btn" title="Alterna font: Macchina da scrivere / Serif" data-i18n-title="focus_toggle_font_title">
+            <span id="focusFontLabel">⌨️ Typewriter</span>
+          </button>
+          <button type="button" id="btnFocusExit" class="focus-hud-btn exit" title="Esci dalla modalità Non Disturbo (Esc)" data-i18n-title="focus_exit_title">
+            ✕ <span data-i18n="focus_exit">Exit</span>
+          </button>
+        </div>
+      </div>
+      <div id="workspaceWrapper" class="workspace-wrapper">
+        <div id="panes" class="split">
+          <div id="editPane" class="edit-pane">
+            <div id="editorToolbar" class="editor-toolbar" role="toolbar" aria-label="Strumenti di formattazione">
+              <button type="button" class="tb-btn" id="tbBold" title="Grassetto (Cmd+B)" data-i18n-title="tb_bold" aria-label="Grassetto"><b>B</b></button>
+              <button type="button" class="tb-btn" id="tbItalic" title="Corsivo (Cmd+I)" data-i18n-title="tb_italic" aria-label="Corsivo"><i>I</i></button>
+              <span class="tb-sep"></span>
+              <button type="button" class="tb-btn" id="tbH2" title="Sottotitolo (H2)" data-i18n-title="tb_h2" aria-label="Sottotitolo H2">H2</button>
+              <button type="button" class="tb-btn" id="tbH3" title="Sezione (H3)" data-i18n-title="tb_h3" aria-label="Sezione H3">H3</button>
+              <span class="tb-sep"></span>
+              <button type="button" class="tb-btn" id="tbQuote" title="Citazione" data-i18n-title="tb_quote" aria-label="Citazione">”</button>
+              <button type="button" class="tb-btn" id="tbUl" title="Elenco puntato" data-i18n-title="tb_ul" aria-label="Elenco puntato">•</button>
+              <button type="button" class="tb-btn" id="tbOl" title="Elenco numerato" data-i18n-title="tb_ol" aria-label="Elenco numerato">1.</button>
+              <button type="button" class="tb-btn" id="tbBreak" title="Interruzione di scena (***)" data-i18n-title="tb_break" aria-label="Interruzione di scena">⁕⁕⁕</button>
+              <span class="tb-sep"></span>
+              <button type="button" class="tb-btn" id="tbLink" title="Inserisci link (Cmd+K)" data-i18n-title="tb_link" aria-label="Link">🔗</button>
+              <button type="button" class="tb-btn" id="tbImage" title="Inserisci immagine" data-i18n-title="tb_image" aria-label="Immagine">🖼</button>
+              <button type="button" class="tb-btn" id="tbTable" title="Inserisci tabella" data-i18n-title="tb_table" aria-label="Tabella">⊞</button>
+              <input type="file" id="tbImageInput" accept="image/*" style="display:none;" />
+            </div>
+            <div id="focusBackdrop" class="focus-backdrop" aria-hidden="true"></div>
+            <textarea id="ta" spellcheck="true" readonly
+              data-i18n-placeholder="editor_placeholder"
+              placeholder="Write here… auto-saving is enabled."></textarea>
+          </div>
+          <div id="prevWrap">
+            <iframe id="prevFrame" title="Preview" sandbox="allow-same-origin"></iframe>
+          </div>
+        </div>
+
+        <!-- Cassetto Taccuino del libro -->
+        <aside id="notebookDrawer" class="notebook-drawer hidden">
+          <div class="notebook-drawer-header">
+            <div class="notebook-title-row">
+              <span class="notebook-header-icon">📓</span>
+              <h3 data-i18n="notebook_drawer_title">Book Notes</h3>
+            </div>
+            <div class="notebook-drawer-actions">
+              <button type="button" id="btnDrawerNewNote" class="nb-icon-btn" title="New note" data-i18n-title="btn_new_note">＋</button>
+              <button type="button" id="btnDrawerClose" class="nb-icon-btn" title="Close notes">✕</button>
+            </div>
+          </div>
+          <div class="notebook-drawer-body">
+            <div class="note-tabs" id="drawerNoteTabs"></div>
+            <div class="note-editor" id="drawerNoteEditor">
+              <input type="text" id="noteTitleInput" class="note-title-input" placeholder="Note title…" data-i18n-placeholder="note_title_ph" />
+              <textarea id="noteContentInput" class="note-content-input" placeholder="Ideas, research, plot reminders, scenes to develop…" data-i18n-placeholder="note_content_ph"></textarea>
+            </div>
+          </div>
+          <div class="notebook-drawer-footer">
+            <button type="button" id="btnInsertNoteToChapter" class="note-btn primary" title="Insert note text into current chapter at cursor" data-i18n-title="note_insert_title">
+              <span>📥</span> <span data-i18n="note_insert">Insert in Manuscript</span>
+            </button>
+            <button type="button" id="btnConvertNoteToChapter" class="note-btn secondary" title="Turn this note into an official book chapter" data-i18n-title="note_convert_title">
+              <span>📑</span> <span data-i18n="note_convert">Convert to Chapter</span>
+            </button>
+            <button type="button" id="btnDeleteNote" class="note-btn danger" title="Delete note">🗑️</button>
+            <span id="noteSaveStatus" class="note-status-indicator"></span>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Modal di apertura (cartella vault o file da importare) -->
+<div id="openModal" class="hidden">
+  <div class="modal-card">
+    <h3 data-i18n="open_modal_title">Open or create book</h3>
+    <div class="open-choices">
+      <button id="btnOpenNewProject" data-i18n="open_choice_new">✨ Create a new book from scratch</button>
+      <button id="btnOpenFolder" data-i18n="open_choice_folder">📁 Existing book folder (Markdown vault)</button>
+      <button id="btnOpenArchive" data-i18n="open_choice_archive">📕 Import project archive → convert to Markdown</button>
+      <button id="btnOpenDocx" data-i18n="open_choice_docx">📄 Import manuscript (.docx, .vellum, .md) → convert to book</button>
+    </div>
+    <div class="modal-actions">
+      <button id="btnOpenCancel" data-i18n="btn_cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Nuovo Progetto / Libro -->
+<div id="newProjectModal" class="hidden">
+  <div class="modal-card" style="max-width: 520px;">
+    <h3 data-i18n="np_modal_title">✨ Create New Book Project</h3>
+    <p class="muted" style="font-size:12px;margin:8px 0 16px;" data-i18n="np_desc">
+      A dedicated folder (Markdown vault) will be created ready for writing, with <code>book.yaml</code>, initial chapter, and folders for covers and images.
+    </p>
+
+    <div style="margin-bottom: 12px;">
+      <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb" data-i18n="np_book_title_label">Book title *</label>
+      <input type="text" id="npTitle" data-i18n-placeholder="np_book_title_ph" placeholder="e.g. The River's Secret" style="width:100%;padding:8px 10px;font-size:13px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" />
+    </div>
+
+    <div style="margin-bottom: 12px;">
+      <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb" data-i18n="np_author_label">Author name</label>
+      <input type="text" id="npAuthor" data-i18n-placeholder="np_author_ph" placeholder="e.g. John Doe" style="width:100%;padding:8px 10px;font-size:13px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" />
+    </div>
+
+    <div style="margin-bottom: 12px;">
+      <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb" data-i18n="np_parent_dir_label">Parent folder (where to save project)</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="npParentDir" readonly data-i18n-placeholder="np_parent_dir_ph" placeholder="Select folder..." style="flex:1;padding:8px 10px;font-size:12px;border-radius:6px;background:#242220;color:#ddd;border:1px solid #444;" />
+        <button id="btnNpBrowseDir" type="button" style="white-space:nowrap;" data-i18n="btn_browse">Browse…</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 12px;">
+      <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb" data-i18n="np_folder_name_label">Folder name</label>
+      <input type="text" id="npFolderName" data-i18n-placeholder="np_folder_name_ph" placeholder="e.g. the-rivers-secret" style="width:100%;padding:8px 10px;font-size:12px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" />
+    </div>
+
+    <div class="field-row" style="margin-bottom: 16px;">
+      <label style="font-size:12px;color:#bbb"><span data-i18n="np_initial_style_label">Initial editorial style</span>
+        <select id="npStyle" style="width:100%;padding:6px;margin-top:4px;background:#2a2825;color:#fff;border:1px solid #444;border-radius:6px;">
+          <option value="classic">Classic (Kindred / Ornate)</option>
+          <option value="oxford">Oxford (Academic serif)</option>
+          <option value="modern">Modern (Geometric sans)</option>
+          <option value="minimal">Minimal (Clean modern)</option>
+          <option value="adelphi">Adelphi (Traditional)</option>
+          <option value="classico">Standard</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="modal-actions">
+      <button id="btnNpCancel" data-i18n="btn_cancel">Cancel</button>
+      <button id="btnNpCreate" class="cta" data-i18n="btn_create_project">Create Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal file browser (cartella o file, cross-platform) -->
+<div id="fsModal" class="hidden">
+  <div class="modal-card fs-modal-card">
+    <div class="fs-header-row">
+      <h3 id="fsTitle" data-i18n="fs_modal_title">Choose…</h3>
+      <input type="text" id="fsFilterInput" class="fs-filter-input" data-i18n-placeholder="fs_filter_placeholder" placeholder="Filter folders…" />
+    </div>
+    <div id="fsQuick">
+      <button type="button" class="q q-ws" id="btnFsWorkspace" data-i18n="fs_workspace" title="Area di lavoro">⭐ Workspace</button>
+      <button type="button" class="q" id="btnFsDocs" data-i18n="fs_documents" title="Documenti">📄 Documents</button>
+      <button type="button" class="q" id="btnFsDesktop" data-i18n="fs_desktop" title="Scrivania">🖥️ Desktop</button>
+      <button type="button" class="q" id="btnFsDownloads" data-i18n="fs_downloads" title="Download">📥 Downloads</button>
+      <button type="button" class="q" id="btnFsHome" data-p="~" data-i18n="fs_home">🏠 Home</button>
+      <button type="button" class="q" id="btnFsVolumes" data-p="/" data-i18n="fs_volumes">💻 Disks</button>
+      <button type="button" id="btnFsUp" class="q" data-i18n="fs_up">↑ Up</button>
+    </div>
+    <div class="fs-bar-row">
+      <div id="fsBreadcrumb"></div>
+      <button type="button" id="btnFsSetAsWorkspace" class="fs-set-ws-btn" data-i18n="fs_set_workspace_btn" title="Imposta questa cartella come area di lavoro predefinita">📌 Set as Workspace</button>
+    </div>
+    <ul id="fsList"></ul>
+    <div class="modal-actions">
+      <button type="button" id="btnFsOpenFolder" class="subtle-btn" style="margin-right:auto;" data-i18n="fs_open_folder">📁 Open this folder</button>
+      <button id="btnFsNew" data-i18n="fs_new_folder">New folder…</button>
+      <button id="btnFsCancel" data-i18n="btn_cancel">Cancel</button>
+      <button id="btnFsSelect" class="cta" data-i18n="fs_select">Choose</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Guida & Scorciatoie (Tutorial) -->
+<div id="tutorialModal" class="hidden">
+  <div class="modal-card tutorial-card">
+    <div class="tutorial-header">
+      <h3 id="tutorialTitle" data-i18n="tutorial_modal_title">PubCraft Guide &amp; Tutorial</h3>
+      <button type="button" class="modal-close-btn" id="btnTutorialClose">×</button>
+    </div>
+    <div class="tutorial-tabs">
+      <button type="button" class="tutorial-tab active" id="tabTutGuide" data-i18n="tut_tab_guide">Tutorial</button>
+      <button type="button" class="tutorial-tab" id="tabTutShortcuts" data-i18n="tut_tab_shortcuts">Shortcuts</button>
+    </div>
+    <div class="tutorial-body" id="tutorialContent"></div>
+    <div class="modal-actions">
+      <button type="button" id="btnTutorialDismiss" class="cta" data-i18n="modal_close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal di avanzamento / output -->
+<div id="modal" class="hidden">
+  <div class="modal-card">
+    <h3 id="modalTitle">—</h3>
+    <pre id="modalOut"></pre>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- Modal Segnala un problema / Bug Report -->
+<div id="reportIssueModal" class="hidden">
+  <div class="modal-card" style="max-width: 620px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="margin:0;" data-i18n="report_modal_title">🛠️ Segnala un problema</h3>
+      <button type="button" id="btnReportCloseX" class="modal-close-btn">×</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin:0 0 14px;" data-i18n="report_privacy_notice">
+      Viene preparato un rapporto diagnostico locale con versione, ambiente ed eventuali errori registrati. Nessun testo di capitolo, manoscritto, PDF o dato personale viene allegato né inviato automaticamente.
+    </p>
+
+    <div id="reportInputFields">
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb;" data-i18n="report_desc_label">Descrivi cosa stavi facendo o cosa non funziona *</label>
+        <textarea id="reportDesc" rows="3" style="width:100%;padding:8px;font-size:13px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" data-i18n-placeholder="report_desc_ph" placeholder="es. Ho provato ad esportare il PDF per la stampa ma l'operazione è fallita..."></textarea>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+        <div>
+          <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb;" data-i18n="report_expected_label">Risultato atteso (opzionale)</label>
+          <input type="text" id="reportExpected" style="width:100%;padding:6px 8px;font-size:12px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" placeholder="es. Generazione del PDF completa" />
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;margin-bottom:4px;color:#bbb;" data-i18n="report_observed_label">Risultato osservato (opzionale)</label>
+          <input type="text" id="reportObserved" style="width:100%;padding:6px 8px;font-size:12px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" placeholder="es. Errore a schermo" />
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px;color:#bbb;margin-bottom:6px;" data-i18n="report_recent_errors_label">Errori recenti registrati nel sistema:</div>
+        <div id="reportErrorsList" style="max-height:120px;overflow-y:auto;background:#1e1d1b;border:1px solid #3a3835;border-radius:6px;padding:6px;font-size:12px;"></div>
+      </div>
+    </div>
+
+    <div id="reportPreviewArea" class="hidden" style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:12px;font-weight:bold;color:#ddd;" data-i18n="report_preview_title">Anteprima del rapporto generato:</span>
+        <span id="reportStatusBadge" class="note-status-indicator"></span>
+      </div>
+      <textarea id="reportPreviewText" readonly rows="9" style="width:100%;padding:8px;font-family:monospace;font-size:11px;border-radius:6px;background:#181715;color:#ddd;border:1px solid #444;white-space:pre-wrap;"></textarea>
+    </div>
+
+    <div class="modal-actions" style="display:flex;justify-content:flex-end;gap:10px;">
+      <button type="button" id="btnReportCancel" data-i18n="btn_cancel">Annulla</button>
+      <button type="button" id="btnReportPrepare" class="cta" data-i18n="report_btn_prepare">Prepara rapporto</button>
+      <button type="button" id="btnReportCopy" class="cta hidden" data-i18n="report_btn_copy">📋 Copia rapporto</button>
+      <button type="button" id="btnReportExport" class="hidden" data-i18n="report_btn_export">💾 Esporta file…</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal PDF stampa -->
+<div id="printModal" class="hidden">
+  <div class="modal-card">
+    <h3 data-i18n="print_modal_title">PDF / Print — Settings</h3>
+    <p class="muted" data-i18n="print_modal_desc">Book style (saved in vault, applies to print, PDF, and preview):</p>
+    <div class="field-row">
+      <label><span data-i18n="style_label">Style</span>
+        <select id="bookStyle"></select>
+      </label>
+      <label><span data-i18n="body_font_label">Body font</span>
+        <select id="bodyFont"></select>
+      </label>
+      <label><span data-i18n="scene_break_label">Scene breaks</span>
+        <select id="sceneBreak"></select>
+      </label>
+      <label><span data-i18n="opening_label">Chapter opening</span>
+        <select id="bookOpening">
+          <option value="dropcap" data-i18n="opening_dropcap">Drop cap</option>
+          <option value="smallcaps" data-i18n="opening_smallcaps">Small caps (Adelphi/Penguin)</option>
+          <option value="none" data-i18n="opening_none">Plain flush</option>
+        </select>
+      </label>
+      <label><span data-i18n="trim_label">Trim size</span>
+        <select id="trim">
+          <option value="5x8">5×8"</option>
+          <option value="5.25x8">5.25×8"</option>
+          <option value="5.5x8.5">5.5×8.5"</option>
+          <option value="6x9" selected>6×9"</option>
+          <option value="6.14x9.21">6.14×9.21"</option>
+          <option value="6.69x9.61">6.69×9.61"</option>
+          <option value="7x10">7×10"</option>
+          <option value="8.5x11">8.5×11"</option>
+        </select>
+      </label>
+      <label><span data-i18n="pages_label">Estimated pages</span>
+        <input id="pages" type="number" min="1" placeholder="e.g. 250">
+      </label>
+      <label class="check"><input id="bleed" type="checkbox"> <span data-i18n="bleed_label">full bleed</span></label>
+    </div>
+
+    <!-- Chapter Preview Selector and Full Print View -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0 6px;gap:12px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label for="printPreviewChapter" style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="preview_chapter_label">Preview chapter:</label>
+        <select id="printPreviewChapter" style="font:inherit;font-size:12px;padding:4px 8px;border-radius:6px;background:var(--panel);border:1px solid var(--rule);color:var(--ink);"></select>
+      </div>
+      <button type="button" id="btnOpenViewPrint" style="padding:4px 10px;font-size:12px;border-radius:6px;cursor:pointer;display:none;" data-i18n="open_full_viewprint">📖 View full formatted book</button>
+    </div>
+
+    <iframe id="styleSample" title="Print Preview"></iframe>
+
+    <div style="display: flex; align-items: center; justify-content: space-between; margin: 10px 0; font-size: 13px;">
+      <span class="muted" id="lblPrintOutDir">Destination: <b>out-stampa/</b> (inside book folder)</span>
+      <button type="button" id="btnPickPrintDir" style="padding: 3px 8px; font-size: 11px;" data-i18n="btn_pick_other_dir">Choose another folder…</button>
+    </div>
+    <p class="muted" data-i18n="kdp_proof_note">The final proof remains the KDP Print Previewer.</p>
+    <div class="modal-actions">
+      <button id="btnPrintCancel" data-i18n="btn_cancel">Cancel</button>
+      <button id="btnPrintGo" class="cta" data-i18n="btn_start_build">Start build</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Nuovo Capitolo / Front-Back Matter -->
+<div id="newChapterModal" class="hidden">
+  <div class="modal-card">
+    <h3 data-i18n="new_chapter_title">Add to book</h3>
+    <div style="margin: 14px 0;">
+      <label style="display:block;font-size:12px;margin-bottom:6px;color:#bbb" data-i18n="nc_type_label">Section type</label>
+      <select id="newChapterType" style="width:100%;padding:8px 10px;font-size:13px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;">
+        <option value="chapter" data-i18n="nc_type_chapter">📖 Standard chapter</option>
+        <option value="dedication" data-i18n="nc_type_dedication">📜 Dedication (Front matter)</option>
+        <option value="epigraph" data-i18n="nc_type_epigraph">✒️ Epigraph (Front matter)</option>
+        <option value="preface" data-i18n="nc_type_preface">📑 Preface / Introduction (Front matter)</option>
+        <option value="acknowledgments" data-i18n="nc_type_acknowledgments">🙏 Acknowledgments (Back matter)</option>
+        <option value="about-author" data-i18n="nc_type_about">👤 About the Author (Back matter)</option>
+      </select>
+    </div>
+    <div style="margin: 14px 0;">
+      <label style="display:block;font-size:12px;margin-bottom:6px;color:#bbb" data-i18n="nc_title_label">Title</label>
+      <input type="text" id="newChapterTitle" data-i18n-placeholder="nc_title_ph" placeholder="e.g. Chapter 1" style="width:100%;padding:8px 10px;font-size:13px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;" />
+    </div>
+    <div style="margin: 14px 0;">
+      <label style="display:block;font-size:12px;margin-bottom:6px;color:#bbb" data-i18n="nc_position_label">Position</label>
+      <select id="newChapterPosition" style="width:100%;padding:8px 10px;font-size:13px;border-radius:6px;background:#2a2825;color:#fff;border:1px solid #444;">
+        <option value="after-current" data-i18n="nc_pos_after">Immediately after selected chapter</option>
+        <option value="end" data-i18n="nc_pos_end">At the end of the book</option>
+        <option value="start" data-i18n="nc_pos_start">At the beginning of the book</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button id="btnNewChapterCancel" data-i18n="btn_cancel">Cancel</button>
+      <button id="btnNewChapterConfirm" class="cta" data-i18n="btn_add">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Inserisci Tabella Markdown -->
+<div id="tableModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="tableModalTitle">
+  <div class="modal-card">
+    <h3 id="tableModalTitle" data-i18n="table_modal_title">Inserisci Tabella</h3>
+    <div style="display:flex; flex-direction:column; gap:12px; margin: 18px 0 20px;">
+      <label style="display:flex; justify-content:space-between; align-items:center; font-size:13px; color:var(--ink);">
+        <span data-i18n="table_cols">Colonne:</span>
+        <input type="number" id="tableCols" min="1" max="10" value="2" style="width:65px; padding:5px 8px; text-align:center; font-size:14px; border:1px solid var(--rule); border-radius:5px; background:var(--panel2); color:var(--ink);" />
+      </label>
+      <label style="display:flex; justify-content:space-between; align-items:center; font-size:13px; color:var(--ink);">
+        <span data-i18n="table_rows">Righe di dati:</span>
+        <input type="number" id="tableRows" min="1" max="50" value="3" style="width:65px; padding:5px 8px; text-align:center; font-size:14px; border:1px solid var(--rule); border-radius:5px; background:var(--panel2); color:var(--ink);" />
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="btnTableCancel" data-i18n="btn_cancel">Annulla</button>
+      <button type="button" id="btnTableInsert" class="cta" data-i18n="table_insert">Inserisci</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Anteprima Pubblicazione (Ebook & PDF Stampa reale) -->
+<div id="pubPreviewModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pubPreviewTitle">
+  <div class="pub-modal-card">
+    <div class="pub-modal-header">
+      <div class="pub-header-left">
+        <h2 id="pubPreviewTitle" data-i18n="pub_preview_title">Anteprima pubblicazione</h2>
+        <div class="pub-target-switch" role="tablist">
+          <button id="btnPubTargetPrint" class="pub-tab-btn active" role="tab" aria-selected="true" data-i18n="pub_target_print">PDF stampa</button>
+          <button id="btnPubTargetEbook" class="pub-tab-btn" role="tab" aria-selected="false" data-i18n="pub_target_ebook">Ebook</button>
+        </div>
+      </div>
+      <div class="pub-header-center">
+        <button id="btnPubUpdate" class="cta" data-i18n="btn_pub_update">Aggiorna anteprima</button>
+        <div id="pubStatusBadge" class="pub-status-badge pub-status-none" aria-live="polite">
+          <span class="pub-status-dot"></span>
+          <span id="pubStatusText" data-i18n="pub_status_none">Nessuna anteprima</span>
+        </div>
+      </div>
+      <div class="pub-header-right">
+        <a id="btnPubDownload" class="pub-tool-btn" href="#" target="_blank" download data-i18n="pub_download_file" style="display:none;" title="Scarica il file visualizzato">📥 Scarica file</a>
+        <button id="btnPubPreviewClose" class="pub-close-btn" aria-label="Chiudi anteprima" title="Chiudi">✕</button>
+      </div>
+    </div>
+
+    <!-- Barra impostazioni per PDF Stampa -->
+    <div id="pubPrintBar" class="pub-settings-bar">
+      <div class="pub-bar-group">
+        <label for="pubTrim" style="font-size:12px;color:var(--muted);white-space:nowrap;"><span data-i18n="trim_label">Formato</span>:</label>
+        <select id="pubTrim" class="pub-select">
+          <option value="5x8">5×8"</option>
+          <option value="5.25x8">5.25×8"</option>
+          <option value="5.5x8.5">5.5×8.5"</option>
+          <option value="6x9" selected>6×9"</option>
+          <option value="6.14x9.21">6.14×9.21"</option>
+          <option value="6.69x9.61">6.69×9.61"</option>
+          <option value="7x10">7×10"</option>
+          <option value="8.5x11">8.5×11"</option>
+        </select>
+        <label class="check" style="font-size:12px;margin:0 4px;">
+          <input id="pubBleed" type="checkbox">
+          <span data-i18n="pub_bleed_label">Abbondanza</span>
+        </label>
+      </div>
+      <div class="pub-bar-sep"></div>
+      <div class="pub-bar-group">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_view_label">Vista:</span>
+        <button id="btnPubViewSingle" class="pub-toggle-btn active" data-i18n="pub_view_single">Pagina singola</button>
+        <button id="btnPubViewFacing" class="pub-toggle-btn" data-i18n="pub_view_facing">Affiancate</button>
+      </div>
+      <div class="pub-bar-sep"></div>
+      <div class="pub-bar-group">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_guides_label">Guide:</span>
+        <label class="check" style="font-size:12px;margin:0 4px;">
+          <input id="pubGuideCut" type="checkbox">
+          <span data-i18n="pub_guide_cut">Taglio</span>
+        </label>
+        <label class="check" style="font-size:12px;margin:0 4px;">
+          <input id="pubGuideSafe" type="checkbox">
+          <span data-i18n="pub_guide_safe">Area sicura</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Barra impostazioni per Ebook -->
+    <div id="pubEbookBar" class="pub-settings-bar" style="display:none;">
+      <div class="pub-bar-group">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_profile_label">Profilo:</span>
+        <button id="btnPubProfileReader" class="pub-toggle-btn active" data-i18n="pub_profile_reader">E-reader</button>
+        <button id="btnPubProfileTablet" class="pub-toggle-btn" data-i18n="pub_profile_tablet">Tablet</button>
+        <button id="btnPubProfilePhone" class="pub-toggle-btn" data-i18n="pub_profile_phone">Smartphone</button>
+      </div>
+      <div class="pub-bar-sep"></div>
+      <div class="pub-bar-group">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_orient_label">Orientamento:</span>
+        <button id="btnPubOrientPortrait" class="pub-toggle-btn active" data-i18n="pub_orient_portrait">Verticale</button>
+        <button id="btnPubOrientLandscape" class="pub-toggle-btn" data-i18n="pub_orient_landscape">Orizzontale</button>
+      </div>
+      <div class="pub-bar-sep"></div>
+      <div class="pub-bar-group">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_text_size_label">Testo:</span>
+        <button id="btnPubFontDec" class="pub-tool-btn" title="Riduci testo">A−</button>
+        <span id="pubFontVal" style="font-size:12px;min-width:36px;text-align:center;">100%</span>
+        <button id="btnPubFontInc" class="pub-tool-btn" title="Aumenta testo">A+</button>
+        <button id="btnPubFontReset" class="pub-toggle-btn" data-i18n="pub_font_reset">Ripristina</button>
+      </div>
+      <div class="pub-bar-sep"></div>
+      <span class="muted" style="font-size:11px;" data-i18n="pub_kindle_disclaimer">La resa può variare secondo il lettore. Per Kindle verifica anche con Kindle Previewer.</span>
+    </div>
+
+    <!-- Barra navigazione / zoom -->
+    <div id="pubNavBar" class="pub-nav-bar">
+      <div class="pub-bar-group">
+        <label for="pubJumpChapter" style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_nav_jump_label">Vai a:</label>
+        <select id="pubJumpChapter" class="pub-select" style="max-width:240px;"></select>
+      </div>
+      <div class="pub-bar-group" style="margin: 0 auto;">
+        <button id="btnPubPrevPage" class="pub-tool-btn" data-i18n="pub_nav_prev">◀ Precedente</button>
+        <span id="pubPageIndicator" style="font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink);min-width:120px;text-align:center;">Pagina — di —</span>
+        <button id="btnPubNextPage" class="pub-tool-btn" data-i18n="pub_nav_next">Successiva ▶</button>
+      </div>
+      <div class="pub-bar-group">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;" data-i18n="pub_zoom_label">Zoom:</span>
+        <button id="btnPubZoomOut" class="pub-tool-btn" title="Riduci">−</button>
+        <select id="pubZoomSelect" class="pub-select">
+          <option value="fit-width" data-i18n="pub_zoom_fit_width">Adatta larghezza</option>
+          <option value="fit-page" data-i18n="pub_zoom_fit_page">Adatta pagina</option>
+          <option value="0.5">50%</option>
+          <option value="0.75">75%</option>
+          <option value="1.0" selected>100%</option>
+          <option value="1.25">125%</option>
+          <option value="1.5">150%</option>
+          <option value="2.0">200%</option>
+        </select>
+        <button id="btnPubZoomIn" class="pub-tool-btn" title="Ingrandisci">+</button>
+      </div>
+    </div>
+
+    <!-- Area visualizzatore -->
+    <div id="pubViewerContainer" class="pub-viewer-container" tabindex="0">
+      <div id="pubNoticeEmpty" class="pub-notice-box">
+        <div style="font-size:32px;margin-bottom:8px;">📖</div>
+        <h3 data-i18n="pub_empty_title">Nessuna anteprima generata</h3>
+        <p class="muted" data-i18n="pub_prompt_update">Premi "Aggiorna anteprima" per compilare e visualizzare il documento reale.</p>
+      </div>
+      <div id="pubNoticeLoading" class="pub-notice-box hidden">
+        <div class="pub-spinner"></div>
+        <h3 id="pubLoadingTitle" data-i18n="pub_status_generating">Generazione in corso…</h3>
+        <p class="muted" data-i18n="pub_loading_desc">Compilazione dell'impaginazione reale e rendering fedele dei byte generati.</p>
+      </div>
+      <div id="pubNoticeError" class="pub-notice-box hidden">
+        <div style="font-size:32px;margin-bottom:8px;color:#e74c3c;">⚠️</div>
+        <h3 id="pubErrorTitle" data-i18n="pub_error_title">Errore di generazione anteprima</h3>
+        <pre id="pubErrorMsg" class="pub-error-pre"></pre>
+        <button id="btnPubRetry" class="cta" data-i18n="btn_retry">Riprova</button>
+      </div>
+      <div id="pubPdfViewport" class="pub-pdf-viewport hidden"></div>
+      <div id="pubEbookViewport" class="pub-ebook-viewport hidden">
+        <div id="pubEbookDeviceFrame" class="pub-device-frame profile-reader orient-portrait">
+          <div class="pub-device-screen">
+            <iframe id="pubEbookFrame" title="Ebook Preview" sandbox="allow-same-origin"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/marked.min.js"></script>
+<script src="/static/pdf.min.js"></script>
+<script src="/static/tutorial.js"></script>
+<script src="/static/app.js?v=1.0.6"></script>
+</body>
+</html>

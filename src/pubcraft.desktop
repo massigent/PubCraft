@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=PubCraft
+Comment=Markdown Book Formatter & Publisher (Amazon KDP & EPUB)
+Exec=pubcraftgui %u
+Icon=pubcraft
+Terminal=false
+Categories=Office;Publishing;WordProcessor;
+MimeType=application/x-pubcraft;inode/directory;
+Keywords=book;markdown;epub;pdf;kdp;amazon;vellum;publisher;
+StartupNotify=true
+StartupWMClass=pubcraftgui

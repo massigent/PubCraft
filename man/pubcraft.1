@@ -1,0 +1,50 @@
+.TH PUBCRAFT 1 "ottobre 2026" "pubcraft 1.0.0-alpha.1" "Manuale utente"
+.SH NOME
+pubcraft \- compila vault Markdown in PDF pronti per la stampa KDP ed EPUB Kindle
+.SH SINTASSI
+.B pubcraft
+.I comando
+.RI [ opzioni ]
+.SH COMANDI
+.TP
+.B init <vaultdir> [titolo]
+Inizializza un nuovo progetto libro da zero: crea la cartella del vault con book.yaml, un primo capitolo (01-capitolo-1.md) e le sottocartelle cover/ e images/.
+.TP
+.B build-print <vaultdir> <cartella> [opzioni stampa]
+Compila un vault Markdown in PDF impaginato con misure esatte di trim Amazon KDP, margini con gutter alternato automatico ed eventuale bleed da 0.125".
+.TP
+.B build <vaultdir> <file.epub> [--kindle]
+Compila un vault Markdown in EPUB 3 valido (con --kindle aggiunge copertina e checklist KDP).
+.TP
+.B export-md <archivio> <vaultdir>
+Importa un archivio di progetto esterno e lo esporta come vault Markdown pulito (book.yaml + un file .md per capitolo + images/). Apribile con Obsidian o qualunque editor di testo.
+.TP
+.B info <archivio>
+Mostra titolo, autore, capitoli, sottotitoli e statistiche dell'archivio.
+.TP
+.B list <archivio>
+Elenca il contenuto dell'archivio.
+.TP
+.B open <archivio>
+Esporta in HTML temporaneo e lo apre nel browser per ispezione.
+.TP
+.B export-html <archivio> <cartella>
+Genera una pagina HTML autonoma con immagini e stili incorporati.
+.TP
+.B export-epub <archivio> <file.epub> [--kindle]
+Esporta l'archivio direttamente in EPUB.
+.TP
+.B export-print <archivio> <cartella> [opzioni stampa]
+Esporta l'archivio in HTML e PDF impaginato per la stampa KDP.
+.SH TRIM KDP SUPPORTATI
+5x8, 5.25x8, 5.5x8.5, 6x9, 7x10, 8x10, 8.5x8.5, 8.5x11.
+.SH OPZIONI STAMPA
+[--trim 6x9] [--pages N] [--bleed|--no-bleed] [--pdf]
+.SH ESEMPI
+.nf
+pubcraft build-print ./mio-libro ./out-stampa --trim 6x9 --pages 200
+pubcraft build ./mio-libro ./mio-libro.epub --kindle
+pubcraft export-md archivio.zip ./mio-libro-vault
+.fi
+.SH NOTE
+Software open source distribuito con licenza MIT.

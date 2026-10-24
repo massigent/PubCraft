@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""
+PubCraft MCP Server Launcher
+Connects AI agents (Claude, Cursor, Antigravity, Pi) to PubCraft.
+Ensures PubCraft GUI is running (or starts it), then execs pubcraftgui --mcp.
+"""
+import os
+import sys
+import json
+import time
+import subprocess
+import urllib.request
+
+APP_PATH = "/Applications/PubCraft.app"
+GUI_BIN = "/usr/local/bin/pubcraftgui"
+if not os.path.exists(GUI_BIN):
+    GUI_BIN = "/Applications/PubCraft.app/Contents/MacOS/pubcraftgui"
+
+def get_instance_info():
+    config_dir = os.environ.get("PUBCRAFT_CONFIG_DIR")
+    if not config_dir:
+        home = os.path.expanduser("~")
+        config_dir = os.path.join(home, ".pubcraft")
+    inst_file = os.path.join(config_dir, "instance.json")
+    if not os.path.exists(inst_file):
+        return None
+    try:
+        with open(inst_file, "r") as f:
+            data = json.load(f)
+        url = data.get("url")
+        if not url:
+            return None
+        # Ping /api/state with short timeout
+        req = urllib.request.Request(f"{url}/api/state", headers={"User-Agent": "pubcraft-mcp"})
+        with urllib.request.urlopen(req, timeout=0.6) as resp:
+            if resp.status == 200:
+                return data
+    except Exception:
+        pass
+    return None
+
+def ensure_gui_running():
+    inst = get_instance_info()
+    if inst:
+        return True
+
+    # Prova ad avviare PubCraft GUI
+    if os.path.exists(APP_PATH):
+        try:
+            subprocess.Popen(["open", "-a", APP_PATH], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(25):
+                time.sleep(0.15)
+                if get_instance_info():
+                    return True
+        except Exception:
+            pass
+    elif os.path.exists(GUI_BIN):
+        try:
+            subprocess.Popen([GUI_BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            for _ in range(25):
+                time.sleep(0.15)
+                if get_instance_info():
+                    return True
+        except Exception:
+            pass
+    return False
+
+def main():
+    ensure_gui_running()
+    args = [GUI_BIN, "--mcp"] + sys.argv[1:]
+    os.execv(GUI_BIN, args)
+
+if __name__ == "__main__":
+    main()

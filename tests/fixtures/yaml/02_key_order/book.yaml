@@ -1,0 +1,12 @@
+title: "Reordered Keys"
+author: "John Smith"
+language: "it"
+chapters:
+  - title: "Prologo"
+    id: "ch-prologue"
+    type: "preface"
+    file: "01-prologue.md"
+  - id: "ch-01"
+    type: "chapter"
+    file: "02-first.md"
+    title: "Capitolo Uno"

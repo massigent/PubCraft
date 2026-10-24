@@ -1,0 +1,46 @@
+# Binari e artefatti di build
+build/
+*.app/
+*.dmg
+dist/
+
+# File generati di pubblicazione
+/vault-*/
+*.epub
+*.pdf
+out-stampa/
+out-stampa-*/
+*.mobi
+
+# Cestino locale del vault e miniature
+.cestina/
+**/.cestina/
+.thumbs/
+**/.thumbs/
+
+# Dipendenze dei test e stato locale delle esportazioni
+node_modules/
+.pubcraft-print.json
+.pubcraft-write-*
+
+# File di sistema e editor
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Progetti e archivi Vellum privati (non versionare manoscritti)
+*.vellum
+*.vellum/
+
+# Note tecniche interne, non destinate al repository pubblico
+/docs/AUDIT_*.md
+/docs/GUIDA_IMPLEMENTAZIONE_MCP.md

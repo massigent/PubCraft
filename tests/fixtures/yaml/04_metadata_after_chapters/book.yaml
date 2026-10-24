@@ -1,0 +1,13 @@
+chapters:
+  - file: "ch1.md"
+    title: "Capitolo Unico"
+title: "Metadati in Coda"
+author: "Autore Tardo"
+language: "es"
+style: "modern"
+opening: "smallcaps"
+font: "lora"
+scenebreak: "asterisms"
+trim: "5.5x8.5"
+pages: 180
+bleed: false

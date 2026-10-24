@@ -1,0 +1,20 @@
+title: "Standard Book"
+author: "Jane Doe"
+language: "en"
+style: "classic"
+opening: "dropcap"
+font: "ebgaramond"
+scenebreak: "fleuron"
+cover: "cover/front.jpg"
+trim: "6x9"
+pages: 240
+bleed: true
+chapters:
+  - file: "01.md"
+    id: "ch-1"
+    title: "First Chapter"
+    type: "chapter"
+  - file: "02.md"
+    id: "ch-2"
+    title: "Second Chapter"
+    type: "chapter"
