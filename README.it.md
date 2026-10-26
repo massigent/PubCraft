@@ -1,60 +1,61 @@
 # PubCraft
 
-**Scrivi il tuo libro in Markdown. Mantieni i file sul tuo computer. Esporta EPUB e impaginati di stampa da un unico progetto.**
+**Scrivi il tuo libro in Markdown. Conserva i file sul tuo computer. Esporta EPUB e impaginati di stampa dallo stesso progetto.**
 
-PubCraft è uno strumento gratuito e open source per scrivere e pubblicare libri. Offre un editor locale, un'interfaccia a riga di comando, l'esportazione EPUB, strumenti per l'impaginazione di stampa e il supporto all'importazione di progetti Vellum.
+PubCraft è uno strumento gratuito e open source per scrivere e pubblicare libri: editor locale nel browser, compilatore CLI in C, importazione di manoscritti, esportazione EPUB e anteprime di stampa. Il progetto rimane composto da normali file Markdown e `book.yaml`.
 
-> **Software alfa:** lavora su copie dei manoscritti e conserva sempre un backup. Controlla i progetti importati e tutti i file esportati prima della pubblicazione. Gli output per la stampa e gli ebook non sono certificati da Amazon KDP o da altri distributori.
+> **Software alfa:** conserva backup e lavora su copie dei tuoi manoscritti. Controlla ogni importazione/esportazione. Un file generato non è automaticamente certificato per Amazon KDP, IngramSpark o altri distributori.
 
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
-[![Licenza MIT](https://img.shields.io/badge/licenza-MIT-blue.svg)](LICENSE)
+[![Licenza MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![PubCraft mostra un capitolo dimostrativo in Markdown accanto all'anteprima tipografica del libro](docs/media/pubcraft-editor.png)
+**Ultima versione: 1.0.0-alpha.2** — [Note di rilascio e tutti i download](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.2)
 
-**Scarica ora:** [Windows installer (.exe)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-Setup-1.0.0-alpha.1.exe) · [App macOS (.dmg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.dmg) · [Linux AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-x86_64.AppImage) · [Tutti i download](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.1)
+| Sistema | Download |
+| --- | --- |
+| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-Setup-1.0.0-alpha.2.exe) · [ZIP portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2-windows-x64.zip) |
+| macOS Intel | [App DMG](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2.dmg) · [Installer PKG](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2.pkg) · [Archivio portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2-macos.tar.gz) |
+| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2-linux-amd64.deb) · [Archivio portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/PubCraft-1.0.0-alpha.2-linux-x64.tar.gz) |
 
-[Segnala un problema](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md) · [Collabora](CONTRIBUTING.md) · [English](README.md)
+[Checksum SHA-256](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/checksums-sha256.txt) · [English](README.md) · [Segnala un problema](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md) · [Contribuisci](CONTRIBUTING.md)
+
+**Prima di aggiornare:** chiudi la vecchia applicazione. Su Apple Silicon questa build Intel richiede Rosetta. L'app macOS ha una firma ad-hoc, non una firma Developer ID o notarizzazione Apple; PKG macOS e installer Windows non sono firmati da un editore verificato. Il sistema può mostrare avvisi di sicurezza. Usa la Release ufficiale e verifica i checksum. Gli archivi GitHub “Source code” contengono sorgenti, non programmi pronti da avviare.
+
+![Editor PubCraft e anteprima del libro](docs/media/pubcraft-editor.png)
+
+## Novità della seconda alfa
+
+- **Organizzazione:** vista Corkboard a schede, sinossi, stato dei capitoli, conteggi di parole per selezione/sessione, palette comandi e menu riorganizzati.
+- **Import Scrivener:** progetti, Binder, RTF supportato, template e archivi ZIP; miglioramenti a DOCX, ODT e Markdown.
+- **Protezione dei progetti:** selezione/importazione non distruttive, YAML invalido preservato, salvataggi versionati, blocchi fra schede/progetti, copertine e cestino senza perdita dei contenuti precedenti.
+- **EPUB:** sanitizzazione XML/UTF-8, immagini annidate, manifest coerenti, liste valide e identificatori persistenti.
+- **Anteprime e diagnostica:** revisioni più affidabili, aggiornamenti UUID sicuri, configurazione isolata e coordinamento MCP/GUI.
+
+Tutti i dettagli sono nelle [note di rilascio bilingui](RELEASE_NOTES_1.0.0-alpha.2.md), nel [changelog](CHANGELOG.md) e nel [resoconto di validazione](docs/RELEASE_VALIDATION_1.0.0-alpha.2.md).
 
 ## Perché PubCraft?
 
-Hai un libro in Vellum e vuoi continuare a lavorarci senza dipendere per sempre da quel software? Vuoi scrivere su Windows o Linux, conservare il manoscritto in Markdown o usare uno strumento locale che ti accompagni dalla bozza all'ebook e all'impaginato? PubCraft nasce per rispondere a queste esigenze.
+- **File portabili:** capitoli Markdown, metadati YAML e immagini locali, modificabili anche con altri editor.
+- **Lavoro locale:** nessun account o backend cloud PubCraft. Eventuali servizi AI esterni collegati tramite MCP hanno le proprie politiche di riservatezza.
+- **Importazione:** Vellum, Scrivener, DOCX, ODT, Markdown e PDF. La conversione non riproduce perfettamente ogni caratteristica del documento originale: verifica il risultato.
+- **Scrittura e pubblicazione:** capitoli, note, anteprima del manoscritto, controlli tipografici e anteprime reali EPUB/PDF generate su richiesta.
+- **Stampa:** HTML/PDF con impostazioni di formato e abbondanza. Il PDF richiede un renderer supportato disponibile; resa e paginazione possono variare.
+- **Gratuito e open source:** codice MIT; font e dipendenze mantengono le rispettive licenze.
 
-- **File portabili:** capitoli e metadati sono salvati come normali file Markdown e `book.yaml` in una cartella di progetto.
-- **Lavoro locale:** PubCraft funziona sul tuo computer e non richiede un account cloud PubCraft. Scegli tu dove conservare i file. Se colleghi un client AI esterno tramite MCP, si applicano le politiche di privacy di quel servizio.
-- **Importazione da Vellum:** importa progetti `.vellum` supportati e converte i contenuti in un progetto Markdown modificabile. Non è garantito che ogni dettaglio venga mantenuto: verifica il risultato.
-- **Ebook e stampa:** esporta EPUB e genera file per l'impaginazione di stampa con impostazioni per formato pagina e bleed. Per creare il PDF serve un renderer supportato.
-- **Il tuo flusso di lavoro:** scrivi nell'editor integrato, usa la CLI o modifica i file Markdown con un altro editor.
-- **Gratuito e open source:** il codice di PubCraft usa la licenza MIT. Font e dipendenze incluse hanno licenze proprie: consulta gli avvisi in [third-party-licenses](third-party-licenses/) e le [licenze dei font](fonts/README.md).
+## Iniziare
 
-## Download
+Avvia l'applicazione e scegli **Nuovo libro** oppure una cartella progetto. Il progetto contiene `book.yaml`, capitoli `.md`/`.markdown` e, facoltativamente, `cover/` e `images/`. Conserva l'originale e un backup separato.
 
-Scegli il download per il tuo computer:
-
-- **Windows 64-bit:** [Scarica l'installer (.exe)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-Setup-1.0.0-alpha.1.exe) · [ZIP portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-windows-x64.zip)
-- **macOS Intel:** [Scarica l'app (.dmg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.dmg) · [Pacchetto installer (.pkg)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1.pkg)
-- **Linux 64-bit:** [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-x86_64.AppImage) · [Pacchetto Debian/Ubuntu (.deb)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-linux-amd64.deb) · [Archivio portatile (.tar.gz)](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/PubCraft-1.0.0-alpha.1-linux-x64.tar.gz)
-
-[Note e file della release](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.1) · [Checksum SHA-256](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.1/checksums-sha256.txt). Gli archivi “Source code” generati da GitHub contengono codice, non applicazioni pronte da avviare.
-
-Questa alfa supporta macOS x86_64, Windows x64 e Linux x64. Su Apple Silicon potrebbe servire Rosetta; non è inclusa una versione macOS arm64 nativa. macOS potrebbe mostrare un avviso per sviluppatore non identificato perché la build non è notarizzata. Leggi le note della release: i pacchetti e il livello di test possono variare. Su Linux l'esportazione PDF può richiedere Chromium o un altro renderer supportato.
-
-## Per iniziare
-
-Un progetto PubCraft è una cartella con `book.yaml` e capitoli Markdown, con eventuali cartelle `cover/` e `images/`.
-
-### Aprire l'editor grafico
+### Interfaccia e Watch
 
 ```sh
 pubcraftgui ./mio-libro
-```
-
-L'editor si apre nel browser, ma viene servito da un processo locale sul computer. Per aprire la vista Watch:
-
-```sh
 pubcraftgui --watch ./mio-libro
 ```
 
-### Creare ed esportare dalla riga di comando
+L'interfaccia usa il browser, ma viene servita da un processo locale: non è un servizio web ospitato. Il binario GUI include anche l'ingresso MCP su stdio, `pubcraftgui --mcp`.
+
+### CLI
 
 ```sh
 pubcraft init ./mio-libro "Il mio libro"
@@ -62,39 +63,34 @@ pubcraft build ./mio-libro ./mio-libro.epub --kindle
 pubcraft build-print ./mio-libro ./out-stampa --trim 6x9 --pages 200 --pdf
 ```
 
-L'esportazione PDF richiede un renderer supportato. Prima del caricamento o della stampa, controlla sempre EPUB e PDF con gli strumenti di anteprima del distributore scelto.
-
-### Importare un progetto Vellum
+### Conversione Vellum
 
 ```sh
 pubcraft export-md "./Il mio libro.vellum" "./Il mio libro-markdown"
 ```
 
-Apri la cartella risultante in PubCraft o in un editor Markdown. L'importazione rende i contenuti più facili da riutilizzare: non riproduce necessariamente ogni funzione di impaginazione di Vellum. Dopo la conversione verifica ordine dei capitoli, immagini, metadati e formattazione. Per modificare il progetto Markdown non è necessario continuare a usare Vellum.
+Apri la cartella convertita in PubCraft o in un altro editor Markdown. Verifica ordine, immagini e formattazione. Gli altri formati supportati sono importabili dalla GUI.
 
-La GUI supporta anche l'importazione di manoscritti `.docx`.
+## Compilazione e test
 
-## Compilare dai sorgenti
-
-Requisiti: `make`, un compilatore C e Go 1.23 o successivo. I test browser opzionali richiedono Node.js, le dipendenze di test e Chromium/Brave con remote debugging attivo.
+Requisiti: `make`, compilatore C e Go 1.23+. I test browser opzionali richiedono Node.js e una sessione Chromium/Brave dedicata con debugging remoto.
 
 ```sh
 make
 make check
+go -C src/pubcraftgui test -race -count=1 ./...
 ```
 
-Consulta [tests/README.md](tests/README.md) per i test browser e il packaging. I pacchetti d'installazione richiedono strumenti specifici per ciascun sistema operativo; `make dist` non è un cross-compiler universale.
+`-count=1` evita risultati Go in cache quando cambia soltanto il binario C esterno. Consulta [tests/README.md](tests/README.md) e il [resoconto di validazione](docs/RELEASE_VALIDATION_1.0.0-alpha.2.md).
 
-## Limiti dell'alfa
+`make` aggiorna i binari autonomi, **non una `.app` esistente**. Su macOS `make pkg-macos` assembla e firma ad-hoc il bundle e crea DMG/PKG/archivio portatile: non è notarizzazione Apple. Le build native Linux/Windows sono definite nel workflow [Release builds](.github/workflows/release-build.yml); `make dist` non è un cross-compilatore universale.
 
-PubCraft è in fase di test attivo. Importazione, paginazione, tipografia e resa PDF possono variare in base ai file originali, ai font, al sistema operativo e al renderer. Un'esportazione completata non certifica la conformità per KDP, IngramSpark o altri servizi. Conserva l'originale e un backup, verifica i file generati con strumenti indipendenti e segnala i problemi usando un esempio minimo privo di testo personale.
+## Limiti e collaborazione
 
-## Feedback e collaborazioni
+Conversioni, tipografia e paginazione dipendono da sorgenti, font, sistema e renderer. I lettori EPUB possono sostituire la tipografia. Il sottoinsieme YAML supportato è volutamente limitato per rendere sicuri gli aggiornamenti dei progetti. Questa release non include pacchetti nativi Apple Silicon o Linux ARM.
 
-Sono benvenuti feedback, segnalazioni, documentazione, traduzioni, test e contributi al codice: non serve essere sviluppatori. Inizia da [GitHub Issues](https://github.com/massigent/PubCraft/issues) o leggi [CONTRIBUTING.md](CONTRIBUTING.md). Indica versione di PubCraft, sistema operativo, passaggi e risultato atteso/osservato. **Non pubblicare manoscritti privati, testi inediti o copertine protette da copyright.**
-
-PubCraft è nato come strumento per il flusso di scrittura dell'autore. Viene condiviso gratuitamente con la speranza che sia utile ad altri scrittori e che la community aiuti a farlo crescere.
+Sono benvenuti [segnalazioni](https://github.com/massigent/PubCraft/issues), documentazione, traduzioni e test. Indica versione, sistema, passaggi e risultato atteso/ottenuto. **Non allegare manoscritti privati, testi inediti o copertine protette. Leggi i rapporti diagnostici prima di pubblicarli: la redazione automatica può non riconoscere ogni informazione sensibile.**
 
 ## Licenza
 
-Il codice sorgente di PubCraft è distribuito con licenza [MIT](LICENSE). Font e componenti di terze parti mantengono le rispettive licenze, indicate negli avvisi inclusi nel progetto.
+Codice sotto [licenza MIT](LICENSE). Consulta le [attribuzioni dei font](fonts/README.md) e le [licenze di terze parti](third-party-licenses/) per le risorse con licenza separata.

@@ -70,13 +70,16 @@ Font resources are installed beside the CLI or under `share/pubcraft/fonts`.
 Linux/Windows require current **C binaries**, not just cross-compiled Go GUIs.
 Packaging refuses a C binary older than `src/pubcraft.c`; build it using the target
 toolchain (Linux compiler or MinGW), then run the corresponding `make pkg-*` target.
-Docker is required by the existing AppImage/DEB/NSIS recipes. These recipes cannot
-be certified merely by building the native macOS application.
+Native release jobs in `.github/workflows/release-build.yml` build and test the
+Linux/Windows packages. Linux packaging uses `scripts/package_release.py linux`
+with `dpkg-deb` and checksum-verified `APPIMAGETOOL` / `APPIMAGE_RUNTIME` paths;
+Windows uses `scripts/package_release.py windows` with native NSIS on PATH.
+These packages cannot be certified merely by building the macOS application.
 
 Check portable archives before publishing:
 
 ```sh
-python3 tests/check_packages.py build/PubCraft-1.0.0-macos.tar.gz
+python3 tests/check_packages.py "build/PubCraft-$(cat VERSION)-macos.tar.gz"
 make verify-packages  # checks all three portable archives; old ones must fail
 ```
 
@@ -87,6 +90,16 @@ to update `build/PubCraft.app`. To test the bundle's embedded GUI directly:
 ```sh
 PUBCRAFT_GUI_BIN="$PWD/build/PubCraft.app/Contents/MacOS/pubcraftgui" node tests/test_project_safety.cjs
 ```
+
+Release-specific results and limitations are recorded in
+[`docs/RELEASE_VALIDATION_1.0.0-alpha.2.md`](../docs/RELEASE_VALIDATION_1.0.0-alpha.2.md).
+Always run `go -C src/pubcraftgui test -race -count=1 .` when the C binary changes:
+Go's test cache does not track that external executable.
+
+Two additional real-template tests are opt-in through
+`PUBCRAFT_SCRIVENER_TEMPLATE_FIXTURE`. They copy the selected file into a temporary
+directory before importing it. No private template is shipped or read by default;
+the normal Scrivener tests use synthetic projects.
 
 Project mutations require the `X-PubCraft-Vault` header. The server serializes
 these mutations with saves, builds and project transitions, rejecting missing or

@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -42,6 +43,13 @@ def main():
             for name in z.namelist():
                 if name.endswith((".xml", ".opf", ".xhtml")):
                     ET.fromstring(z.read(name))
+        # A minimal synthetic archive also exercises the native extraction path.
+        archive = tmp / "synthetic archive.vellum"
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr("bookMetadata.plist", plistlib.dumps({"title": "Synthetic archive", "author": "Test"}))
+            z.writestr("content.vellumcontent", plistlib.dumps({"sample": "content"}, fmt=plistlib.FMT_BINARY))
+        inspected = subprocess.run([str(cli), "info", str(archive)], env=env, capture_output=True, text=True, check=True)
+        assert "Synthetic archive" in inspected.stdout
         proc = subprocess.Popen([str(gui), str(vault)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             descriptor = home / "config/instance.json"
