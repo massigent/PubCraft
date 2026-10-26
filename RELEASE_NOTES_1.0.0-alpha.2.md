@@ -68,7 +68,7 @@ Use these release assets, not GitHub's separate source-code archives. Quit the o
 See [release validation](docs/RELEASE_VALIDATION_1.0.0-alpha.2.md) for the exact checks and platform limits. Regression coverage includes project isolation, concurrent saves, selection/import safety, UUID stability, XML output, nested lists and browser workflows. EPUBCheck 5.4.0 is used on a representative set of synthetic EPUBs; this does **not** certify every possible manuscript or distributor-specific requirements.
 
 - This is still **alpha software**. Use backups and inspect every import/export.
-- macOS builds target **Intel/x86_64**; Apple Silicon requires Rosetta. The app is ad-hoc signed, not Developer ID signed/notarized; the PKG and Windows installer are not publisher-signed.
+- macOS builds target **Intel/x86_64, macOS 13 Ventura or newer**; Apple Silicon also requires Rosetta. The app is ad-hoc signed, not Developer ID signed/notarized; the PKG and Windows installer are not publisher-signed.
 - Linux PDF export needs a supported browser/renderer. Windows PDF/print behavior depends on the installed renderer; native build/startup checks are not exhaustive interactive testing on every supported OS.
 - Native Apple Silicon and Linux ARM release packages are not included.
 - The C YAML reader is a supported-subset implementation, not a complete YAML parser. Unsupported UUID update forms are rejected without altering the project rather than guessed or rewritten destructively.
@@ -110,4 +110,4 @@ Questa seconda alfa contiene un aggiornamento importante rispetto alla prima ver
 - Miglioramenti tipografici, alle anteprime reali EPUB/PDF, alla diagnostica e al bridge MCP.
 - Pacchetti ricostruiti dai sorgenti puliti e controlli nativi Linux/Windows; bundle macOS firmato ad-hoc dopo l'assemblaggio completo.
 
-**Resta una versione alfa:** conserva backup, lavora su copie e verifica sempre i risultati con il servizio di pubblicazione scelto. La firma ad-hoc macOS non è notarizzazione Apple; installer macOS/Windows non firmati da un editore verificato possono mostrare avvisi di sicurezza. I limiti e i test effettivamente eseguiti sono riportati nel documento di validazione collegato sopra.
+**Resta una versione alfa:** conserva backup, lavora su copie e verifica sempre i risultati con il servizio di pubblicazione scelto. La build Intel richiede macOS 13 Ventura o successivo (su Apple Silicon anche Rosetta). La firma ad-hoc macOS non è notarizzazione Apple; installer macOS/Windows non firmati da un editore verificato possono mostrare avvisi di sicurezza. I limiti e i test effettivamente eseguiti sono riportati nel documento di validazione collegato sopra.

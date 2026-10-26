@@ -13,6 +13,11 @@ This record distinguishes automated checks from platform/distributor certificati
 
 ### macOS Intel / x86_64
 
+The release targets macOS 13 Ventura or newer. C/helper deployment targets and
+the app's minimum-system-version metadata are set to 13.0, matching the Go binary's
+minimum OS. Bundle display/build versions use Apple's numeric version fields;
+the full alpha version remains in the UI, CLI and release metadata.
+
 - Clean-checkout C/Go compilation, CLI integration suite, Go tests with the race detector and an explicit uncached `-count=1`, and `go vet`.
 - The 15-runner browser regression suite passes in a dedicated Brave/CDP profile, including real PDF generation through the test adapter. This tests the adapter/browser renderer, not every normal headless-browser startup environment.
 - `node --check` for the application and Watch scripts.

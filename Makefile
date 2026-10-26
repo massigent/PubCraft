@@ -1,5 +1,9 @@
 VERSION := $(shell tr -d '\r\n' < VERSION)
 PKG_VERSION := 1.0.0.2
+MACOS_MIN_VERSION := 13.0
+ifeq ($(shell uname -s),Darwin)
+export MACOSX_DEPLOYMENT_TARGET=$(MACOS_MIN_VERSION)
+endif
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
 PREFIX ?= /usr/local
@@ -50,8 +54,11 @@ app: all $(FONTFILES) $(THIRDPARTY)
 	cp -R third-party-licenses $(APP)/Contents/Resources/
 	cp src/AppIcon.icns $(APP)/Contents/Resources/droplet.icns
 	cp src/AppIcon.icns $(APP)/Contents/Resources/applet.icns
-	/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $(VERSION)" $(APP)/Contents/Info.plist
-	/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $(PKG_VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.0" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 2" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :CFBundleGetInfoString string $(VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $(MACOS_MIN_VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersionByArchitecture:x86_64 $(MACOS_MIN_VERSION)" $(APP)/Contents/Info.plist
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraftgui
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft-html2pdf

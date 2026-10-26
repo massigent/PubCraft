@@ -19,7 +19,7 @@ PubCraft è uno strumento gratuito e open source per scrivere e pubblicare libri
 
 [Checksum SHA-256](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/checksums-sha256.txt) · [English](README.md) · [Segnala un problema](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md) · [Contribuisci](CONTRIBUTING.md)
 
-**Prima di aggiornare:** chiudi la vecchia applicazione. Su Apple Silicon questa build Intel richiede Rosetta. L'app macOS ha una firma ad-hoc, non una firma Developer ID o notarizzazione Apple; PKG macOS e installer Windows non sono firmati da un editore verificato. Il sistema può mostrare avvisi di sicurezza. Usa la Release ufficiale e verifica i checksum. Gli archivi GitHub “Source code” contengono sorgenti, non programmi pronti da avviare.
+**Prima di aggiornare:** chiudi la vecchia applicazione. La build macOS richiede **macOS 13 Ventura o successivo**; su Apple Silicon serve anche Rosetta per questa build Intel. L'app macOS ha una firma ad-hoc, non una firma Developer ID o notarizzazione Apple; PKG macOS e installer Windows non sono firmati da un editore verificato. Il sistema può mostrare avvisi di sicurezza. Usa la Release ufficiale e verifica i checksum. Gli archivi GitHub “Source code” contengono sorgenti, non programmi pronti da avviare.
 
 ![Editor PubCraft e anteprima del libro](docs/media/pubcraft-editor.png)
 

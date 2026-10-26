@@ -19,7 +19,7 @@ PubCraft is a free, open-source writing and publishing tool with a local browser
 
 [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.2/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md) · [Contribute](CONTRIBUTING.md)
 
-**Before installing:** quit the previous version. Apple Silicon Macs require Rosetta for this Intel build. The macOS app is ad-hoc signed, not Developer ID signed/notarized; macOS PKG and Windows installer are not publisher-signed. OS security warnings may appear. Use the official release and verify its checksums. GitHub's “Source code” archives contain code, not ready-to-run programs.
+**Before installing:** quit the previous version. The macOS build requires **macOS 13 Ventura or newer**; Apple Silicon Macs also require Rosetta for this Intel build. The macOS app is ad-hoc signed, not Developer ID signed/notarized; macOS PKG and Windows installer are not publisher-signed. OS security warnings may appear. Use the official release and verify its checksums. GitHub's “Source code” archives contain code, not ready-to-run programs.
 
 ![PubCraft editor and styled book preview](docs/media/pubcraft-editor.png)
 
