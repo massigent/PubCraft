@@ -29,6 +29,9 @@ def main():
                    PUBCRAFT_BIN=str(cli))
         vault = tmp / "book with spaces"
         subprocess.run([str(cli), "init", str(vault), "Release: synthetic test"], env=env, check=True)
+        # Exercise the native archive backend and XML sanitizer, not just startup.
+        (vault / "01-capitolo-1.md").write_bytes(
+            b'---\ntitle: Chapter\n---\n\nText \x0c \x0b caf\xe8, emoji \xf0\x9f\x98\x80.\n\n- Outer\n    - Inner\n')
         epub = tmp / "book.epub"
         subprocess.run([str(cli), "build", str(vault), str(epub)], env=env, check=True)
         with zipfile.ZipFile(epub) as z:
