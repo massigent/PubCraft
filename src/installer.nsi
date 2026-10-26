@@ -3,7 +3,7 @@
 !define PUBCRAFT_VERSION "1.0.0-alpha.2"
 
 Name "PubCraft"
-OutFile "../build/PubCraft-Setup-${PUBCRAFT_VERSION}.exe"
+OutFile "..\build\PubCraft-Setup-${PUBCRAFT_VERSION}.exe"
 InstallDir "$PROGRAMFILES64\PubCraft"
 InstallDirRegKey HKLM "Software\PubCraft" "Install_Dir"
 RequestExecutionLevel admin
@@ -16,7 +16,7 @@ RequestExecutionLevel admin
 !define MUI_WELCOMEPAGE_TEXT "PubCraft permette di scrivere libri in Markdown ed esportare EPUB e impaginati di stampa. Verifica sempre i file con il servizio di pubblicazione scelto.$\r$\n$\r$\nFai clic su Avanti per continuare."
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "../LICENSE"
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 
@@ -32,19 +32,17 @@ RequestExecutionLevel admin
 Section "PubCraft Core" SecCore
   SetOutPath "$INSTDIR"
 
-  File "../build/pubcraft-windows-amd64.exe"
-  Rename "$INSTDIR\pubcraft-windows-amd64.exe" "$INSTDIR\pubcraft.exe"
-
-  File "../build/pubcraftgui-windows-amd64.exe"
-  Rename "$INSTDIR\pubcraftgui-windows-amd64.exe" "$INSTDIR\pubcraftgui.exe"
+  SetOverwrite on
+  File /oname=pubcraft.exe "..\build\pubcraft-windows-amd64.exe"
+  File /oname=pubcraftgui.exe "..\build\pubcraftgui-windows-amd64.exe"
 
   File "app.ico"
-  File /oname=README.txt "../README.md"
-  File /oname=LICENSE.txt "../LICENSE"
+  File /oname=README.txt "..\README.md"
+  File /oname=LICENSE.txt "..\LICENSE"
   SetOutPath "$INSTDIR\third-party-licenses"
-  File /r "../third-party-licenses/*"
+  File /r "..\third-party-licenses\*"
   SetOutPath "$INSTDIR\fonts"
-  File /r "../fonts/*"
+  File /r "..\fonts\*"
   SetOutPath "$INSTDIR"
 
   ; Registro di sistema
