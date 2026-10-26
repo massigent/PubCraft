@@ -92,7 +92,12 @@ PUBCRAFT_GUI_BIN="$PWD/build/PubCraft.app/Contents/MacOS/pubcraftgui" node tests
 ```
 
 Release-specific results and limitations are recorded in
-[`docs/RELEASE_VALIDATION_1.0.0-alpha.2.md`](../docs/RELEASE_VALIDATION_1.0.0-alpha.2.md).
+[`docs/RELEASE_VALIDATION_1.0.0-alpha.3.md`](../docs/RELEASE_VALIDATION_1.0.0-alpha.3.md).
+Mac release outputs are always Universal 2. Read [AGENTS.md](../AGENTS.md) and
+[the release playbook](../docs/RELEASING.md) before packaging or publishing.
+`make verify-macos-release` checks all four Mac formats and both CPU slices;
+the workflow then runs the exact same artifacts natively on Intel and Apple Silicon.
+Portable guard tests: `python3 -m unittest discover -s tests -p test_release_guards.py`.
 Always run `go -C src/pubcraftgui test -race -count=1 .` when the C binary changes:
 Go's test cache does not track that external executable.
 

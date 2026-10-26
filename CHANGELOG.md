@@ -2,6 +2,24 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
+## [1.0.0-alpha.3]
+
+- Universal 2 `PubCraft.app` and portable Mac executables: native Intel and Apple
+  Silicon, without Rosetta; macOS 13.0 minimum on both architectures.
+- Native AppKit launcher replaces a system prebuilt AppleScript applet with a
+  potentially newer ARM deployment target; ordinary launch and drag/open remain.
+- Direct `.app.zip`, plus DMG/PKG/portable tools; public staged app permissions.
+- The same artifact set is tested natively on Intel and Apple Silicon, including
+  real app startup, GUI runtime architecture, CLI and WebKit helper execution.
+- Automated guards for every executable's CPU slices, signatures, minimum OS,
+  version markers, source provenance, cross-format hashes and public permissions.
+- Persistent `AGENTS.md` and `docs/RELEASING.md`; pinned release Go toolchain,
+  increasing `BUILD_NUMBER` and UTF-8-safe version checks on Windows.
+- Windows/Linux packages rebuilt for the new version. Historical releases remain
+  unchanged; all alpha.2 writing/import/safety improvements are included.
+
+Details: [bilingual alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md).
+
 ## [1.0.0-alpha.2]
 
 Full details, downloads and Italian summary: [release notes](RELEASE_NOTES_1.0.0-alpha.2.md).
@@ -56,5 +74,6 @@ Initial public alpha: local Markdown editor, CLI, Vellum/DOCX import, EPUB/print
 
 Historical notes: [1.0.0-alpha.1](RELEASE_NOTES_1.0.0-alpha.1.md).
 
+[1.0.0-alpha.3]: https://github.com/massigent/PubCraft/compare/v1.0.0-alpha.2...v1.0.0-alpha.3
 [1.0.0-alpha.2]: https://github.com/massigent/PubCraft/compare/v1.0.0-alpha.1...v1.0.0-alpha.2
 [1.0.0-alpha.1]: https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.1

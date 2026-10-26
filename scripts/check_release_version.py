@@ -10,10 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def validate(root=ROOT):
     errors = []
-    version = (root / "VERSION").read_text().strip()
+    version = (root / "VERSION").read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?", version):
         errors.append("VERSION is not a supported semantic version")
-    build = (root / "BUILD_NUMBER").read_text().strip()
+    build = (root / "BUILD_NUMBER").read_text(encoding="utf-8").strip()
     if not build.isdigit() or int(build) < 1:
         errors.append("BUILD_NUMBER must be a positive, monotonically increasing integer")
     # Full-history release checkouts must increase the build number. Source
@@ -41,12 +41,12 @@ def validate(root=ROOT):
         "src/installer.nsi": '!define PUBCRAFT_VERSION "' + version + '"',
     }
     for name, expected in markers.items():
-        if expected not in (root / name).read_text():
+        if expected not in (root / name).read_text(encoding="utf-8"):
             errors.append(name + ": release version differs from VERSION")
-    html = (root / "src/pubcraftgui/web/index.html").read_text()
+    html = (root / "src/pubcraftgui/web/index.html").read_text(encoding="utf-8")
     if 'data-i18n="welcome_version">Version ' + version + '</div>' not in html:
         errors.append("welcome HTML version differs from VERSION")
-    js = (root / "src/pubcraftgui/web/static/app.js").read_text()
+    js = (root / "src/pubcraftgui/web/static/app.js").read_text(encoding="utf-8")
     welcome = re.findall(r'"welcome_version":\s*"([^"]+)"', js)
     if not welcome or any(not value.endswith(" " + version) for value in welcome):
         errors.append("one or more localized welcome versions differ from VERSION")

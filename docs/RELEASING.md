@@ -16,7 +16,9 @@ first. A push is a source update, **not** permission to reuse old executable fil
 4. Run `python3 scripts/check_release_version.py`. Add bilingual release notes and
    a new validation record; update both live READMEs and changelog. Historical
    release notes/tags/assets are immutable.
-5. Commit source before final builds. Release binaries must embed that clean
+5. Keep source-reading release scripts explicitly UTF-8 on every platform;
+   Windows' default code page cannot decode all localized source text.
+6. Commit source before final builds. Release binaries must embed that clean
    revision; final source/tag and build-provenance records must agree.
 
 ## 2. Build the convenient Mac app — always Universal
@@ -45,6 +47,10 @@ be substituted for `make pkg-macos`. Merely making the AppleScript launcher
 Universal does not make the Go GUI, CLI or helper Universal. A system applet can
 also embed an ARM minimum OS newer than our macOS 13 contract; keep the native
 launcher and check every slice's deployment metadata.
+
+Public bundle copies are normalized in temporary staging: directories/executables
+are accessible to other users and data resources are readable. Do not preserve
+owner-only modes from an external/test volume in public downloads.
 
 The verifier rejects missing architectures, invalid signatures, an incorrect
 version/minimum OS, different executables between formats, or an unexpected

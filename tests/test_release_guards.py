@@ -72,7 +72,7 @@ class VersionGuards(unittest.TestCase):
         for name, data in files.items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(data)
+            path.write_text(data, encoding='utf-8')
 
     def test_markers_must_all_agree(self):
         with tempfile.TemporaryDirectory() as d:
@@ -82,6 +82,20 @@ class VersionGuards(unittest.TestCase):
                 self.assertEqual(validate(root), [])
                 (root / 'src/pubcraftgui/version.go').write_text('const appVersion = "old"')
                 self.assertTrue(any('version.go' in e for e in validate(root)))
+
+    def test_unicode_sources_are_always_read_as_utf8(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.fixture(root)
+            p = root / 'src/pubcraft.c'
+            p.write_text(p.read_text(encoding='utf-8') + '\n// “UTF-8” — è 日本語', encoding='utf-8')
+            original = Path.read_text
+            def read_utf8(path, *args, **kwargs):
+                self.assertEqual(kwargs.get('encoding'), 'utf-8')
+                return original(path, *args, **kwargs)
+            with patch('check_release_version.subprocess.run', return_value=SimpleNamespace(returncode=1)):
+                with patch.object(Path, 'read_text', read_utf8):
+                    self.assertEqual(validate(root), [])
 
     def test_build_number_must_increase_when_history_available(self):
         with tempfile.TemporaryDirectory() as d:

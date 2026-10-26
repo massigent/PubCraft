@@ -45,6 +45,9 @@ This applies to EVERY executable, not just the launcher:
 - Keep the native launcher in `src/pubcraft-launcher.m`. A system prebuilt
   AppleScript applet can silently raise the ARM minimum OS (even if the app's
   Info.plist says 13.0); do not substitute it for the compiled native launcher.
+- Normalize public app permissions in disposable staging (not on a personal
+  volume): app ZIP/DMG/PKG must not inherit owner-only modes. Preserve signatures
+  and check every format against the same executable hashes.
 - Assemble ALL resources first, sign each executable and finally the bundle,
   then verify signatures. Ad-hoc signing is NOT Developer ID signing/notarization.
   Do not describe an unsigned installer or non-notarized app as Apple-approved.
@@ -55,7 +58,8 @@ This applies to EVERY executable, not just the launcher:
   monotonically increasing Apple/installer build number. Increment both for a new
   release. Do not reuse an already published tag or overwrite its assets.
 - Keep C, Go, NSIS and every localized welcome-version marker synchronized.
-  `python3 scripts/check_release_version.py` must pass.
+  `python3 scripts/check_release_version.py` must pass. Python release tools must
+  read/write source text explicitly as UTF-8, not the Windows locale default.
 - Preserve historical changelog/validation/release documents. Add a new release
   document; update live README links in English and Italian.
 - Source, all platform binaries and the release tag must correspond to the same
