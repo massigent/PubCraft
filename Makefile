@@ -1,5 +1,7 @@
 VERSION := $(shell tr -d '\r\n' < VERSION)
-PKG_VERSION := 1.0.0.2
+CORE_VERSION := $(firstword $(subst -, ,$(VERSION)))
+BUILD_NUMBER := $(shell tr -d '\r\n' < BUILD_NUMBER)
+PKG_VERSION := $(CORE_VERSION).$(BUILD_NUMBER)
 MACOS_MIN_VERSION := 13.0
 ifeq ($(shell uname -s),Darwin)
 export MACOSX_DEPLOYMENT_TARGET=$(MACOS_MIN_VERSION)
@@ -19,7 +21,15 @@ APP := build/PubCraft.app
 DMG := build/PubCraft-$(VERSION).dmg
 export COPYFILE_DISABLE=1
 
-all: $(BIN) $(GUI) $(HTML2PDF)
+all: check-release-version $(BIN) $(GUI) $(HTML2PDF)
+
+check-release-version:
+	python3 scripts/check_release_version.py
+
+# Native `make all` is for development. EVERY app/release build explicitly
+# rebuilds both architectures, regardless of whichever native outputs exist.
+macos-universal: check-release-version
+	python3 scripts/build_macos_universal.py --min-version $(MACOS_MIN_VERSION)
 
 $(BIN): $(SRC)
 	@mkdir -p build
@@ -46,30 +56,28 @@ uninstall:
 
 # Always assemble all resources BEFORE signing. This is ad-hoc signing only;
 # Developer ID signing/notarization requires the publisher's own credentials.
-app: all $(FONTFILES) $(THIRDPARTY)
+app: macos-universal $(FONTFILES) $(THIRDPARTY)
 	rm -rf $(APP)
-	osacompile -o $(APP) src/PubCraft.applescript
-	cp $(BIN) $(GUI) $(HTML2PDF) $(APP)/Contents/MacOS/
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
+	cp build/pubcraft-launcher $(BIN) $(GUI) $(HTML2PDF) $(APP)/Contents/MacOS/
 	cp -R fonts $(APP)/Contents/Resources/fonts
 	cp -R third-party-licenses $(APP)/Contents/Resources/
 	cp src/AppIcon.icns $(APP)/Contents/Resources/droplet.icns
 	cp src/AppIcon.icns $(APP)/Contents/Resources/applet.icns
-	/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.0" $(APP)/Contents/Info.plist
-	/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 2" $(APP)/Contents/Info.plist
-	/usr/libexec/PlistBuddy -c "Add :CFBundleGetInfoString string $(VERSION)" $(APP)/Contents/Info.plist
-	/usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $(MACOS_MIN_VERSION)" $(APP)/Contents/Info.plist
-	/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersionByArchitecture:x86_64 $(MACOS_MIN_VERSION)" $(APP)/Contents/Info.plist
+	python3 scripts/configure_macos_app.py $(APP) $(MACOS_MIN_VERSION)
+	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft-launcher
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraftgui
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft-html2pdf
 	codesign --force --sign - $(APP)
 	codesign --verify --deep --strict $(APP)
+	python3 scripts/check_macos_universal.py --app $(APP)
 
 # Unique disposable staging directories prevent stale/personal files leaking
 # from a previous packaging attempt. Stop immediately on any failed command.
 dmg: app
 	@set -eu; stage=$$(mktemp -d /tmp/pubcraft-dmg-XXXXXX); trap 'rm -rf "$$stage"' EXIT; \
-	cp -R $(APP) "$$stage/"; ln -s /Applications "$$stage/Applications"; \
+	python3 scripts/stage_macos_app.py $(APP) "$$stage/PubCraft.app"; ln -s /Applications "$$stage/Applications"; \
 	cp README.md README.it.md "$$stage/"; \
 	hdiutil create -volname PubCraft -srcfolder "$$stage" -ov -format UDZO $(DMG)
 
@@ -81,14 +89,20 @@ pkg-macos: dmg
 	find "$$stage/portable" -type f -exec chmod 644 {} +; \
 	chmod 755 "$$stage/portable/pubcraft" "$$stage/portable/pubcraftgui" "$$stage/portable/pubcraft-html2pdf" "$$stage/portable/install.sh"; \
 	tar --uid 0 --gid 0 --uname root --gname wheel -czf build/PubCraft-$(VERSION)-macos.tar.gz -C "$$stage/portable" .; \
-	cp -R $(APP) "$$stage/pkg/"; \
-	pkgbuild --root "$$stage/pkg" --identifier com.pubcraft.app --version $(PKG_VERSION) --install-location /Applications build/PubCraft-$(VERSION).pkg
+	python3 scripts/stage_macos_app.py $(APP) "$$stage/pkg/PubCraft.app"; \
+	pkgbuild --root "$$stage/pkg" --ownership recommended --identifier com.pubcraft.app --version $(PKG_VERSION) --install-location /Applications build/PubCraft-$(VERSION).pkg; \
+	ditto -c -k --keepParent "$$stage/pkg/PubCraft.app" build/PubCraft-$(VERSION)-macos-universal.app.zip
 	python3 tests/check_packages.py build/PubCraft-$(VERSION)-macos.tar.gz
+	python3 scripts/check_macos_universal.py --app $(APP) --app-zip build/PubCraft-$(VERSION)-macos-universal.app.zip --portable build/PubCraft-$(VERSION)-macos.tar.gz --dmg $(DMG) --pkg build/PubCraft-$(VERSION).pkg
 	hdiutil verify $(DMG)
+
+verify-macos-release:
+	python3 scripts/check_macos_universal.py --app-zip build/PubCraft-$(VERSION)-macos-universal.app.zip --portable build/PubCraft-$(VERSION)-macos.tar.gz --dmg $(DMG) --pkg build/PubCraft-$(VERSION).pkg --expected-source "$$(git rev-parse HEAD)"
 
 check: $(BIN) $(GUI)
 	bash tests/test_cli.sh $(BIN)
 	go -C src/pubcraftgui test -race -count=1 -v .
+	python3 -m unittest discover -s tests -p test_release_guards.py
 
 check-browser: all
 	npm --prefix tests test
@@ -118,4 +132,4 @@ dist: pkg-macos pkg-linux pkg-windows
 clean:
 	rm -rf build
 
-.PHONY: all install uninstall app dmg pkg-macos check check-browser verify-packages linux linux-amd64 linux-arm64 pkg-linux appimage pkg-windows dist clean
+.PHONY: all check-release-version macos-universal verify-macos-release install uninstall app dmg pkg-macos check check-browser verify-packages linux linux-amd64 linux-arm64 pkg-linux appimage pkg-windows dist clean

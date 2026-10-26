@@ -14,9 +14,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: .go-version
           cache-dependency-path: src/pubcraftgui/go.sum
       - name: Install build dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y musl-tools zip unzip squashfs-tools libglib2.0-0
@@ -68,9 +70,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: .go-version
           cache-dependency-path: src/pubcraftgui/go.sum
       - uses: msys2/setup-msys2@v2
         id: msys2
@@ -86,6 +90,8 @@ jobs:
       - name: Build GUI and native smoke test
         shell: pwsh
         run: |
+          python scripts/check_release_version.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go -C src/pubcraftgui build -trimpath -ldflags '-H=windowsgui' -o ../../build/pubcraftgui-windows-amd64.exe .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/smoke_release.py --cli build/pubcraft-windows-amd64.exe --gui build/pubcraftgui-windows-amd64.exe
@@ -115,4 +121,86 @@ jobs:
             build/PubCraft-Setup-*.exe
             build/pubcraft-windows-amd64.exe
             build/pubcraftgui-windows-amd64.exe
+          if-no-files-found: error
+
+  macos-build:
+    name: Build one Universal 2 macOS artifact set
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache-dependency-path: src/pubcraftgui/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and verify all macOS package architectures
+        run: |
+          python3 -m unittest discover -s tests -p test_release_guards.py
+          make pkg-macos
+          make verify-macos-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-universal
+          path: |
+            build/PubCraft-*.dmg
+            build/PubCraft-*.pkg
+            build/PubCraft-*-macos.tar.gz
+            build/PubCraft-*-macos-universal.app.zip
+            build/pubcraft
+            build/pubcraftgui
+            build/pubcraft-html2pdf
+          if-no-files-found: error
+
+  macos-native:
+    name: Test Universal packages natively (${{ matrix.arch }})
+    needs: macos-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: amd64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache-dependency-path: src/pubcraftgui/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-macos-universal
+          path: build
+      - name: Verify SAME package bytes and execute native slices
+        run: |
+          chmod +x build/pubcraft build/pubcraftgui build/pubcraft-html2pdf
+          python3 tests/check_packages.py "build/PubCraft-$(cat VERSION)-macos.tar.gz"
+          python3 scripts/check_macos_universal.py \
+            --app-zip "build/PubCraft-$(cat VERSION)-macos-universal.app.zip" \
+            --portable "build/PubCraft-$(cat VERSION)-macos.tar.gz" \
+            --dmg "build/PubCraft-$(cat VERSION).dmg" \
+            --pkg "build/PubCraft-$(cat VERSION).pkg" \
+            --expected-source "$GITHUB_SHA" --native-arch '${{ matrix.arch }}' --smoke \
+            --report 'build/macos-native-${{ matrix.arch }}.json'
+      - name: Native unit and CLI regressions
+        run: |
+          bash tests/test_cli.sh build/pubcraft
+          go -C src/pubcraftgui test -race -count=1 ./...
+          go -C src/pubcraftgui vet ./...
+          python3 -m unittest discover -s tests -p test_release_guards.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-native-proof-${{ matrix.arch }}
+          path: build/macos-native-${{ matrix.arch }}.json
           if-no-files-found: error

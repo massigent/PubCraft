@@ -7,6 +7,9 @@ import tarfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from macos_arch import require_universal
+
 VERSION = (ROOT / 'VERSION').read_text().strip()
 PACKAGES = {
     f'PubCraft-{VERSION}-macos.tar.gz': ('pubcraft', 'pubcraftgui'),
@@ -24,6 +27,9 @@ def verify(path):
         with tarfile.open(path) as archive:
             files = {m.name.lstrip('./'): archive.extractfile(m).read() for m in archive.getmembers() if m.isfile()}
     windows = path.suffix == '.zip'
+    if path.name.endswith('-macos.tar.gz'):
+        for name in ('pubcraft', 'pubcraftgui', 'pubcraft-html2pdf'):
+            require_universal(files.get(name, b''), name)
     for source, packaged in zip(PACKAGES[path.name], ('pubcraft.exe', 'pubcraftgui.exe') if windows else ('pubcraft', 'pubcraftgui')):
         binary = ROOT / 'build' / source
         if not binary.exists():
