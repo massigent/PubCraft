@@ -631,9 +631,9 @@ function formatMarkdownForBook(raw) {
       continue;
     }
 
-    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(">") ||
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(">") || 
         trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ") ||
-        /^\d+\.\s/.test(trimmed) || trimmed.startsWith("![") ||
+        /^\d+\.\s/.test(trimmed) || trimmed.startsWith("![") || 
         trimmed === "***" || trimmed === "* * *" || trimmed === "---") {
       out.push(line);
       continue;

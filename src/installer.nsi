@@ -1,6 +1,6 @@
 ; PubCraft Windows Installer Script (NSIS)
 !include "MUI2.nsh"
-!define PUBCRAFT_VERSION "1.0.0-alpha.1"
+!define PUBCRAFT_VERSION "1.0.0-alpha.2"
 
 Name "PubCraft"
 OutFile "../build/PubCraft-Setup-${PUBCRAFT_VERSION}.exe"
@@ -13,7 +13,7 @@ RequestExecutionLevel admin
 !define MUI_ICON "app.ico"
 !define MUI_UNICON "app.ico"
 !define MUI_WELCOMEPAGE_TITLE "Benvenuto nell'installazione di PubCraft"
-!define MUI_WELCOMEPAGE_TEXT "PubCraft trasforma i tuoi libri e manoscritti Markdown in perfetti PDF per la stampa Amazon KDP e file EPUB per Kindle.$\r$\n$\r$\nFai clic su Avanti per continuare."
+!define MUI_WELCOMEPAGE_TEXT "PubCraft permette di scrivere libri in Markdown ed esportare EPUB e impaginati di stampa. Verifica sempre i file con il servizio di pubblicazione scelto.$\r$\n$\r$\nFai clic su Avanti per continuare."
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "../LICENSE"

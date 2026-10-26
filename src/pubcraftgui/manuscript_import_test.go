@@ -257,3 +257,260 @@ func TestAutoInitNaturalSortAndSectionTypes(t *testing.T) {
 		t.Errorf("ordinamento naturale fallito per capitoli: %v (indici 1=%d, 2=%d, 10=%d)", filenames, idx1, idx2, idx10)
 	}
 }
+
+func TestImportScrivenerProject(t *testing.T) {
+	tmpDir := t.TempDir()
+	scrivDir := filepath.Join(tmpDir, "MioRomanzo.scriv")
+	filesDataDir := filepath.Join(scrivDir, "Files", "Data")
+	if err := os.MkdirAll(filesDataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	uuid1 := "11111111-1111-1111-1111-111111111111"
+	uuid2 := "22222222-2222-2222-2222-222222222222"
+
+	ch1Dir := filepath.Join(filesDataDir, uuid1)
+	ch2Dir := filepath.Join(filesDataDir, uuid2)
+	_ = os.MkdirAll(ch1Dir, 0o755)
+	_ = os.MkdirAll(ch2Dir, 0o755)
+
+	rtf1 := `{\rtf1\ansi\deff0 {\fonttbl{\f0 Arial;}} \f0\fs24 Nel \b cuore \b0 della notte, il silenzio regnava sovrano.\par}`
+	rtf2 := `{\rtf1\ansi\deff0 {\fonttbl{\f0 Arial;}} \f0\fs24 All'alba il sole \i illumin\'f2 \i0 le montagne.\par}`
+
+	_ = os.WriteFile(filepath.Join(ch1Dir, "content.rtf"), []byte(rtf1), 0o644)
+	_ = os.WriteFile(filepath.Join(ch2Dir, "content.rtf"), []byte(rtf2), 0o644)
+
+	scrivxContent := `<?xml version="1.0" encoding="UTF-8"?>
+<ScrivenerProject Version="2.0" Author="Autore Di Test" Title="Il Mio Grande Romanzo">
+    <Binder>
+        <BinderItem UUID="DRAFT-0000" Type="DraftFolder">
+            <Title>Manuscript</Title>
+            <Children>
+                <BinderItem UUID="` + uuid1 + `" Type="Text">
+                    <Title>Capitolo 1: La Notte</Title>
+                    <MetaData><IncludeInCompile>Yes</IncludeInCompile></MetaData>
+                </BinderItem>
+                <BinderItem UUID="` + uuid2 + `" Type="Text">
+                    <Title>Capitolo 2: Il Risveglio</Title>
+                    <MetaData><IncludeInCompile>Yes</IncludeInCompile></MetaData>
+                </BinderItem>
+            </Children>
+        </BinderItem>
+    </Binder>
+</ScrivenerProject>`
+
+	if err := os.WriteFile(filepath.Join(scrivDir, "MioRomanzo.scrivx"), []byte(scrivxContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	book, err := importAnyManuscript(scrivDir)
+	if err != nil {
+		t.Fatalf("importAnyManuscript per .scriv fallito: %v", err)
+	}
+
+	if book.Title != "Il Mio Grande Romanzo" {
+		t.Errorf("titolo atteso 'Il Mio Grande Romanzo', ottenuto %q", book.Title)
+	}
+	if book.Author != "Autore Di Test" {
+		t.Errorf("autore atteso 'Autore Di Test', ottenuto %q", book.Author)
+	}
+	if len(book.Chapters) != 2 {
+		t.Fatalf("attesi 2 capitoli, trovati %d", len(book.Chapters))
+	}
+	if book.Chapters[0].Title != "Capitolo 1: La Notte" {
+		t.Errorf("titolo cap 1 inatteso: %q", book.Chapters[0].Title)
+	}
+
+	vDir := getVaultDir()
+	ch1Data, err := os.ReadFile(filepath.Join(vDir, book.Chapters[0].File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ch1Data), "**cuore**") {
+		t.Errorf("conversione RTF grassetto fallita: %s", string(ch1Data))
+	}
+
+	ch2Data, err := os.ReadFile(filepath.Join(vDir, book.Chapters[1].File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ch2Data), "*illuminò*") {
+		t.Errorf("conversione RTF corsivo o carattere accentato fallita: %s", string(ch2Data))
+	}
+}
+
+// Optional external fixtures are never stored in the repository or imported in
+// place: importing may create a sibling vault, so use a disposable copy.
+func optionalScrivenerTemplate(t *testing.T) string {
+	t.Helper()
+	src := os.Getenv("PUBCRAFT_SCRIVENER_TEMPLATE_FIXTURE")
+	if src == "" {
+		t.Skip("set PUBCRAFT_SCRIVENER_TEMPLATE_FIXTURE to test an external template")
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "sample.scrivtemplate")
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+func TestImportScrivenerRealTemplate(t *testing.T) {
+	tmplPath := optionalScrivenerTemplate(t)
+
+	book, err := importScrivenerVault(tmplPath)
+	if err != nil {
+		t.Fatalf("importScrivenerVault con template reale fallito: %v", err)
+	}
+
+	if len(book.Chapters) == 0 {
+		t.Errorf("nessun capitolo estratto dal template Scrivener reale")
+	}
+	vaultMu.Lock()
+	v := vaultDir
+	vaultMu.Unlock()
+	for i, ch := range book.Chapters {
+		filePath := filepath.Join(v, ch.File)
+		data, err := os.ReadFile(filePath)
+		if err == nil {
+			content := string(data)
+			if strings.Contains(content, "<$Scr") || strings.Contains(content, "<!$Scr") {
+				t.Logf("Capitolo %d (%s):\n%s\n---", i, ch.Title, content[:min(len(content), 400)])
+			}
+		}
+	}
+}
+
+func TestCleanScrivenerMarkdown(t *testing.T) {
+	sample := `<$ScrKeepWithNext><$Scr_H::1><$Scr_Ps::0>
+**ACT ONE:
+
+**<!$Scr_H::1><!$Scr_Ps::0>
+
+<$ScrKeepWithNext><$Scr_H::1><$Scr_Ps::0>
+**Opening Image (0 to 1%): 
+
+**<!$Scr_H::1><!$Scr_Ps::0>
+.
+
+<$ScrKeepWithNext><$Scr_H::1><$Scr_Ps::1>
+**Demographic Information:
+
+**<$ScrKeepWithNext><!$Scr_H::1><$Scr_H::2><!$Scr_Ps::1><$Scr_Ps::0>
+**Name:
+
+**<!$Scr_H::2><!$Scr_Ps::0>
+The name you select will help you start thinking about this persona like a real person.
+`
+
+	cleaned := cleanScrivenerMarkdown(sample)
+	t.Logf("Cleaned result:\n%s", cleaned)
+
+	if strings.Contains(cleaned, "<$Scr") || strings.Contains(cleaned, "<!$Scr") {
+		t.Errorf("cleaned contains Scrivener tags:\n%s", cleaned)
+	}
+	if !strings.Contains(cleaned, "# ACT ONE:") {
+		t.Errorf("atteso H1 '# ACT ONE:', ottenuto:\n%s", cleaned)
+	}
+	if !strings.Contains(cleaned, "## Name:") {
+		t.Errorf("atteso H2 '## Name:', ottenuto:\n%s", cleaned)
+	}
+}
+
+func TestInspectTemplateClean(t *testing.T) {
+	tmplPath := optionalScrivenerTemplate(t)
+	book, err := importScrivenerVault(tmplPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultMu.Lock()
+	v := vaultDir
+	vaultMu.Unlock()
+
+	for i, ch := range book.Chapters {
+		if i == 13 {
+			data, err := os.ReadFile(filepath.Join(v, ch.File))
+			if err != nil {
+				t.Fatalf("lettura fallita per capitolo 13: %v", err)
+			}
+			content := string(data)
+			if strings.Contains(content, "<$Scr") || strings.Contains(content, "<!$Scr") {
+				t.Errorf("Capitolo 13 contiene tag Scrivener non puliti:\n%s", content[:min(len(content), 500)])
+			}
+			if !strings.Contains(content, "# ACT 1: SEPARATION") {
+				t.Errorf("atteso '# ACT 1: SEPARATION' nel capitolo 13, ottenuto:\n%s", content[:min(len(content), 500)])
+			}
+		}
+	}
+}
+
+func TestChapterStatsAndSummary(t *testing.T) {
+	content := []byte(`---
+id: 1234
+title: Capitolo Segreto
+summary: "Marco scopre la lettera in soffitta."
+type: chapter
+---
+
+Nel silenzio della notte, la pioggia batteva contro i vetri.
+Un rumore improvviso ruppe la quiete.
+`)
+
+	words, summary, st := parseChapterWordsAndSummary(content)
+	if summary != "Marco scopre la lettera in soffitta." {
+		t.Errorf("summary inatteso: %q", summary)
+	}
+	if st != "" {
+		t.Errorf("status inatteso: %q", st)
+	}
+	expectedWords := 16 // "Nel silenzio della notte, la pioggia batteva contro i vetri. Un rumore improvviso ruppe la quiete."
+	if words != expectedWords {
+		t.Errorf("conteggio parole inatteso: %d (atteso %d)", words, expectedWords)
+	}
+
+	// Test con synopsis invece di summary
+	content2 := []byte(`---
+id: 5678
+synopsis: Fuga attraverso i boschi
+---
+Correvano senza voltarsi indietro.`)
+	words2, summary2, _ := parseChapterWordsAndSummary(content2)
+	if summary2 != "Fuga attraverso i boschi" {
+		t.Errorf("synopsis inatteso: %q", summary2)
+	}
+	if words2 != 4 {
+		t.Errorf("conteggio parole inatteso: %d (atteso 4)", words2)
+	}
+
+	// Test populateChapterStats
+	tmpDir := t.TempDir()
+	ch1Path := filepath.Join(tmpDir, "01-cap1.md")
+	ch2Path := filepath.Join(tmpDir, "02-cap2.md")
+	if err := os.WriteFile(ch1Path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ch2Path, content2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bk := &Book{
+		Title: "Test Book",
+		Chapters: []Chapter{
+			{File: "01-cap1.md", Title: "Capitolo 1"},
+			{File: "02-cap2.md", Title: "Capitolo 2"},
+		},
+	}
+	populateChapterStats(bk, tmpDir)
+	if bk.TotalWords != expectedWords+4 {
+		t.Errorf("totale parole libro errato: %d (atteso %d)", bk.TotalWords, expectedWords+4)
+	}
+	if bk.Chapters[0].Words != expectedWords || bk.Chapters[0].Summary != "Marco scopre la lettera in soffitta." {
+		t.Errorf("stats capitolo 1 errate: %+v", bk.Chapters[0])
+	}
+	if bk.Chapters[1].Words != 4 || bk.Chapters[1].Summary != "Fuga attraverso i boschi" {
+		t.Errorf("stats capitolo 2 errate: %+v", bk.Chapters[1])
+	}
+}

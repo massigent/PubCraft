@@ -288,6 +288,10 @@ const { spawn } = require('child_process');
     await page.evaluate(() => openReportIssueModal());
     await page.waitForFunction(() => !document.querySelector('#reportIssueModal').classList.contains('hidden'), { polling: 100 });
     await page.type('#reportDesc', 'Descrizione errore per test esportazione');
+    // Attende che il campo sia realmente popolato: la modale viene resa
+    // visibile prima del completamento del fetch degli eventi e, su browser
+    // lenti, il primo invio di tastiera può arrivare durante l'init.
+    await page.waitForFunction(() => document.querySelector('#reportDesc')?.value.trim() !== '', { polling: 100 });
     await page.evaluate(() => prepareIssueReport());
     await page.waitForFunction(() => typeof currentReportId !== 'undefined' && currentReportId !== '', { polling: 100 });
     const reportId = await page.evaluate(() => currentReportId);

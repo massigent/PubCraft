@@ -10,6 +10,23 @@ try {
 } catch {}
 
 const $ = (id) => document.getElementById(id);
+// Tronca per code-point (non spezza emoji/surrogate pair come slice).
+// Toglie le virgolette YAML interpretando gli escape (JSON per i doppi apici).
+function unquoteYamlScalar(v) {
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    try { return JSON.parse(v); } catch { return v.slice(1, -1); }
+  }
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) {
+    return v.slice(1, -1).replace(/''/g, "'");
+  }
+  return v;
+}
+
+function truncPoints(s, n) {
+  const a = Array.from(s || "");
+  return a.length > n ? a.slice(0, n).join("") + "…" : (s || "");
+}
+
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -98,7 +115,7 @@ const projectMutationPaths = new Set([
   "/api/newchapter", "/api/deletechapter", "/api/reorder", "/api/setstyle",
   "/api/setfont", "/api/setopening", "/api/setscenebreak", "/api/addcover",
   "/api/delcover", "/api/useasepubcover", "/api/uploadimage",
-  "/api/settitle", "/api/note-to-chapter",
+  "/api/settitle", "/api/setchaptertitle", "/api/note-to-chapter",
 ]);
 let activeProjectMutations = 0;
 
@@ -137,7 +154,14 @@ async function api(path, opts = {}) {
     });
     let body = {};
     try { body = await res.json(); } catch { /* vuoto */ }
-    if (!res.ok) throw new Error(body.error || res.statusText);
+    if (!res.ok) {
+      const err = new Error(body.error || res.statusText);
+      err.status = res.status;
+      err.code = body.code || "";
+      err.domain = body.domain || "";
+      err.location = body.location || "";
+      throw err;
+    }
     if (mutation && typeof markPublicationPreviewStale === "function") {
       markPublicationPreviewStale();
     }
@@ -194,14 +218,42 @@ const I18N = {
     "chapter": "Chapter",
     "cancel": "Cancel",
     "loading": "Loading…",
-
     "focus_exit_title": "Exit Focus Mode (Esc)",
     "focus_toggle_font_title": "Toggle font: Typewriter / Serif",
     "focus_toggle_super_focus_title": "Toggle Super Focus (vertically centered text and continuous typewriter scrolling like iA Writer)",
     "focus_select_chapter_title": "Select chapter",
-
     "btn_new_project": "✨ New Book…",
     "btn_new_project_title": "Create a new book project (folder and book.yaml)",
+    "toggle_sidebar_title": "Toggle sidebar (Cmd+\\)",
+    "hide_sidebar_title": "Hide sidebar (Cmd+\\)",
+    "show_sidebar_title": "Show sidebar (Cmd+\\)",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
     "btn_open": "Open…",
     "btn_open_title": "Open an existing book folder or import a file",
     "btn_new_chapter": "＋ New Chapter",
@@ -235,16 +287,26 @@ const I18N = {
     "btn_open_folder_empty": "📁 Open existing folder…",
     "words_count": "{count} words",
     "words_short": "words",
-    "vw_editor": "Editor",
-    "vw_split": "Editor + Preview",
-    "vw_preview": "Preview",
+    "vw_editor": "✍️ Editor",
+    "vw_corkboard": "📋 Cards",
+    "vw_split": "◫ Split",
+    "vw_preview": "📖 Preview",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
     "editor_placeholder": "Write here… auto-saving is enabled.",
     "open_modal_title": "Open or create book",
     "open_choice_new": "✨ Create a new book from scratch",
     "open_choice_folder": "📁 Existing book folder (Markdown vault)",
     "open_choice_archive": "📕 Import project archive → convert to Markdown",
-    "open_choice_docx": "📄 Import manuscript (.docx, .vellum, .md) → convert to book",
+    "open_choice_docx": "📄 Import manuscript (.docx, .scriv, .vellum, .md) → convert to book",
     "btn_cancel": "Cancel",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
     "np_modal_title": "✨ Create New Book Project",
     "np_desc": "A dedicated folder (Markdown vault) will be created ready for writing, with book.yaml, initial chapter, and folders for covers and images.",
     "np_book_title_label": "Book title *",
@@ -311,23 +373,38 @@ const I18N = {
     "new_chapter_title": "Add to book",
     "nc_type_label": "Section type",
     "nc_type_chapter": "📖 Standard chapter",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
     "nc_type_dedication": "📜 Dedication (Front matter)",
     "nc_type_epigraph": "✒️ Epigraph (Front matter)",
     "nc_type_preface": "📑 Preface / Introduction (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
     "nc_type_acknowledgments": "🙏 Acknowledgments (Back matter)",
     "nc_type_about": "👤 About the Author (Back matter)",
     "nc_title_label": "Title",
     "nc_title_ph": "e.g. Chapter 1",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
     "nc_position_label": "Position",
     "nc_pos_after": "Immediately after selected chapter",
     "nc_pos_end": "At the end of the book",
     "nc_pos_start": "At the beginning of the book",
     "btn_add": "Add",
+    "default_copyright": "Copyright & Colophon",
     "default_dedication": "Dedication",
     "default_epigraph": "Epigraph",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
     "default_about_author": "About the Author",
     "default_acknowledgments": "Acknowledgments",
     "default_preface": "Preface",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
     "modal_close": "Close",
     "modal_error": "Error",
     "build_running_title": "Building in progress…",
@@ -361,7 +438,7 @@ const I18N = {
     "publish_ok": "Publish ok",
     "build_error": "Build error",
     "created_time": "Created {time}",
-    "pick_docx_title": "Choose manuscript (.docx, .vellum, .md, .odt, .pdf)",
+    "pick_docx_title": "Choose manuscript (.docx, .scriv, .vellum, .md, .odt, .pdf)",
     "pick_archive_title": "Choose archive to convert to Markdown",
     "pick_vault_title": "Choose book folder (vault)",
     "pick_print_dir_title": "Folder where to save print.html and PDF",
@@ -419,6 +496,7 @@ const I18N = {
     "pub_verso": "Verso (Left)",
     "tb_bold": "Bold (Cmd+B)",
     "tb_italic": "Italic (Cmd+I)",
+    "tb_h1": "Title (H1)",
     "tb_h2": "Subtitle (H2)",
     "tb_h3": "Section (H3)",
     "tb_quote": "Blockquote (>)",
@@ -434,11 +512,11 @@ const I18N = {
     "table_insert": "Insert",
     "table_col_prefix": "Column",
     "table_cell_prefix": "Cell",
-    "welcome_version": "Version 1.0.0-alpha.1",
+    "welcome_version": "Version 1.0.0-alpha.2",
     "welcome_tutorial_link": "Show PubCraft Tutorial",
     "welcome_shortcuts_link": "Open Help & Shortcuts",
     "welcome_btn_new": "✨ New Book…",
-    "welcome_btn_docx": "📄 Import Manuscript (.docx, .vellum, .md)…",
+    "welcome_btn_docx": "📄 Import Manuscript (.docx, .scriv, .vellum, .md)…",
     "welcome_btn_browse": "📁 Open Existing Folder…",
     "recents_header": "Recent Files",
     "recents_search_placeholder": "Filter projects…",
@@ -455,6 +533,11 @@ const I18N = {
     "topbar_recents_title": "Open recent projects and launcher",
     "topbar_close_book": "✕ Close",
     "topbar_close_book_title": "Close current book",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
     "fs_workspace": "⭐ Workspace",
     "fs_documents": "📄 Documents",
     "fs_desktop": "🖥️ Desktop",
@@ -512,20 +595,62 @@ const I18N = {
     "note_del_confirm": "Delete note \"{title}\" from notebook?",
     "note_convert_confirm": "Convert this note into an official chapter of the manuscript? It will be added to the table of contents and book.yaml.",
     "note_inserted": "Inserted into manuscript!",
-    "btn_delete": "Delete"
+    "btn_delete": "Delete",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   },
   "it": {
     "chapter": "Capitolo",
     "cancel": "Annulla",
     "loading": "Caricamento…",
-
     "focus_exit_title": "Esci dalla modalità Non Disturbo (Esc)",
     "focus_toggle_font_title": "Alterna font: Macchina da scrivere / Serif",
     "focus_toggle_super_focus_title": "Alterna modalità Super Focus (scorrimento continuo al centro stile iA Writer)",
     "focus_select_chapter_title": "Seleziona capitolo",
-
     "btn_new_project": "✨ Nuovo libro…",
     "btn_new_project_title": "Crea un nuovo progetto libro (cartella e book.yaml)",
+    "toggle_sidebar_title": "Mostra/Nascondi barra laterale (Cmd+\\)",
+    "hide_sidebar_title": "Nascondi barra laterale (Cmd+\\)",
+    "show_sidebar_title": "Mostra barra laterale (Cmd+\\)",
+    "export_label": "Esporta",
+    "btn_export_dropdown_title": "Opzioni di esportazione ed anteprima libro",
+    "hint_pub_preview": "Vero EPUB Kindle e PDF tipografico sfogliabile",
+    "hint_print": "Formati 5x8, 6x9, margini e fogli di stile",
+    "hint_kindle": "Compila file .epub pronto per Amazon KDP",
+    "hint_watch": "Anteprima live che si aggiorna a ogni salvataggio",
+    "typography_label": "Tipografia",
+    "btn_typography_title": "Stile tipografico e capolettera",
+    "typography_section_style": "Stile del Libro",
+    "typography_section_opening": "Inizio Capitolo",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Affiancato",
+    "vw_preview_short": "Lettura",
+    "vw_corkboard_short": "Schede",
+    "btn_notes_label": "Note",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "parole totali",
+    "sb_words_chapter": "nel capitolo",
+    "sb_words_today": "oggi",
+    "sb_reading_time": "lettura",
+    "sb_saved": "Salvato su disco",
+    "sb_palette": "Comandi",
+    "palette_placeholder": "Cerca capitoli, note o comandi… (Esc per chiudere)",
+    "palette_cat_chapters": "Capitoli",
+    "palette_cat_notes": "Note del Quaderno",
+    "palette_cat_actions": "Azioni e Viste",
+    "btn_palette_title": "Cerca capitoli, note o comandi (Cmd+K)",
     "btn_open": "Apri…",
     "btn_open_title": "Apri una cartella libro esistente o importa un file",
     "btn_new_chapter": "＋ Nuovo capitolo",
@@ -559,16 +684,26 @@ const I18N = {
     "btn_open_folder_empty": "📁 Apri cartella esistente…",
     "words_count": "{count} parole",
     "words_short": "parole",
-    "vw_editor": "Editor",
-    "vw_split": "Editor + Anteprima",
-    "vw_preview": "Anteprima",
+    "vw_editor": "✍️ Editor",
+    "vw_corkboard": "📋 Lavagna a Schede",
+    "vw_split": "◫ Affiancato",
+    "vw_preview": "📖 Anteprima",
+    "corkboard_title": "Lavagna a Schede",
+    "corkboard_search_placeholder": "Cerca tra le schede…",
+    "corkboard_add": "+ Nuovo Capitolo",
+    "cb_filter_all": "Tutti",
+    "cb_filter_bozza": "🟡 Bozza",
+    "cb_filter_revisione": "🔵 Revisione",
+    "cb_filter_finale": "🟢 Finale",
     "editor_placeholder": "Scrivi qui… il salvataggio è automatico.",
     "open_modal_title": "Apri o crea libro",
     "open_choice_new": "✨ Crea un nuovo libro da zero",
     "open_choice_folder": "📁 Cartella libro esistente (vault markdown)",
     "open_choice_archive": "📕 Importa archivio di progetto → converti in Markdown",
-    "open_choice_docx": "📄 Importa manoscritto (.docx, .vellum, .md) → converti in libro",
+    "open_choice_docx": "📄 Importa manoscritto (.docx, .scriv, .vellum, .md) → converti in libro",
     "btn_cancel": "Annulla",
+    "btn_save": "Salva",
+    "btn_save_synopsis": "Salva Sinossi",
     "np_modal_title": "✨ Crea Nuovo Progetto Libro",
     "np_desc": "Verrà creata una cartella dedicata (vault Markdown) pronta per la scrittura, con book.yaml, capitolo iniziale e cartelle per copertine e immagini.",
     "np_book_title_label": "Titolo del libro *",
@@ -635,23 +770,38 @@ const I18N = {
     "new_chapter_title": "Aggiungi al libro",
     "nc_type_label": "Tipo di sezione",
     "nc_type_chapter": "📖 Capitolo standard",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
     "nc_type_dedication": "📜 Dedica (Front matter)",
     "nc_type_epigraph": "✒️ Epigrafe (Front matter)",
     "nc_type_preface": "📑 Prefazione / Introduzione (Front matter)",
+    "nc_type_prologue": "🌅 Prologo",
+    "nc_type_epilogue": "🌌 Epilogo",
     "nc_type_acknowledgments": "🙏 Ringraziamenti (Back matter)",
     "nc_type_about": "👤 Sull'Autore (Back matter)",
     "nc_title_label": "Titolo",
     "nc_title_ph": "es. Capitolo 1",
+    "nc_summary_label": "Sinossi / Promemoria (opzionale)",
+    "nc_summary_ph": "es. Marco scopre la lettera segreta in soffitta...",
     "nc_position_label": "Posizione",
     "nc_pos_after": "Subito dopo il capitolo selezionato",
     "nc_pos_end": "In fondo al libro",
     "nc_pos_start": "All'inizio del libro",
     "btn_add": "Aggiungi",
+    "default_copyright": "Copyright e Colophon",
     "default_dedication": "Dedica",
     "default_epigraph": "Epigrafe",
+    "default_prologue": "Prologo",
+    "default_epilogue": "Epilogo",
     "default_about_author": "Sull'Autore",
     "default_acknowledgments": "Ringraziamenti",
     "default_preface": "Prefazione",
+    "synopsis_tooltip": "Sinossi / promemoria del capitolo",
+    "synopsis_modal_title": "Sinossi del Capitolo",
+    "synopsis_modal_subtitle": "Breve riassunto o scheda per ricordare la scena (salvato nel frontmatter Markdown del capitolo).",
+    "synopsis_badge_label": "Sinossi",
+    "total_words_tooltip": "Conteggio totale parole del libro",
+    "session_words_tooltip": "Parole scritte durante questa sessione di lavoro",
+    "session_today_short": "oggi",
     "modal_close": "Chiudi",
     "modal_error": "Errore",
     "build_running_title": "Build in corso…",
@@ -685,7 +835,7 @@ const I18N = {
     "publish_ok": "Publish ok",
     "build_error": "Errore build",
     "created_time": "Creato {time}",
-    "pick_docx_title": "Scegli il manoscritto (.docx, .vellum, .md, .odt, .pdf)",
+    "pick_docx_title": "Scegli il manoscritto (.docx, .scriv, .vellum, .md, .odt, .pdf)",
     "pick_archive_title": "Scegli l'archivio da convertire in markdown",
     "pick_vault_title": "Scegli la cartella del libro (vault)",
     "pick_print_dir_title": "Cartella dove salvare print.html e il PDF",
@@ -743,6 +893,7 @@ const I18N = {
     "pub_verso": "Verso (Sinistra)",
     "tb_bold": "Grassetto (Cmd+B)",
     "tb_italic": "Corsivo (Cmd+I)",
+    "tb_h1": "Titolo (H1)",
     "tb_h2": "Sottotitolo (H2)",
     "tb_h3": "Sezione (H3)",
     "tb_quote": "Citazione (>)",
@@ -758,11 +909,11 @@ const I18N = {
     "table_insert": "Inserisci",
     "table_col_prefix": "Colonna",
     "table_cell_prefix": "Cella",
-    "welcome_version": "Versione 1.0.0-alpha.1",
+    "welcome_version": "Versione 1.0.0-alpha.2",
     "welcome_tutorial_link": "Mostra introduzione a PubCraft",
     "welcome_shortcuts_link": "Guida e scorciatoie da tastiera",
     "welcome_btn_new": "✨ Nuovo Libro…",
-    "welcome_btn_docx": "📄 Importa manoscritto (.docx, .vellum, .md)…",
+    "welcome_btn_docx": "📄 Importa manoscritto (.docx, .scriv, .vellum, .md)…",
     "welcome_btn_browse": "📁 Sfoglia altre cartelle…",
     "recents_header": "Progetti recenti",
     "recents_search_placeholder": "Cerca tra i progetti…",
@@ -779,6 +930,11 @@ const I18N = {
     "topbar_recents_title": "Apri i progetti recenti e la schermata iniziale",
     "topbar_close_book": "✕ Chiudi libro",
     "topbar_close_book_title": "Chiudi il libro corrente",
+    "book_menu_rename": "Rinomina libro…",
+    "book_menu_close": "Chiudi libro e torna alla libreria",
+    "settings_language": "Lingua dell'interfaccia",
+    "settings_shortcuts": "Guida & Scorciatoie",
+    "settings_report": "Segnala un problema…",
     "fs_workspace": "⭐ Area di lavoro",
     "fs_documents": "📄 Documenti",
     "fs_desktop": "🖥️ Scrivania",
@@ -836,13 +992,26 @@ const I18N = {
     "note_del_confirm": "Eliminare la nota \"{title}\" dal taccuino?",
     "note_convert_confirm": "Vuoi trasformare questa nota in un capitolo ufficiale del libro? Verrà aggiunta all'indice del manoscritto e in book.yaml.",
     "note_inserted": "Inserito nel capitolo!",
-    "btn_delete": "Elimina"
+    "btn_delete": "Elimina",
+    "btn_settings_title": "Impostazioni e preferenze",
+    "vw_editor_tooltip": "Solo Editor Markdown (Cmd+1)",
+    "vw_split_tooltip": "Editor e anteprima affiancati (Cmd+2)",
+    "vw_preview_tooltip": "Solo lettura anteprima HTML (Cmd+3)",
+    "vw_corkboard_tooltip": "Lavagna a schede Corkboard (Cmd+4)",
+    "vw_editor_title": "Solo Editor Markdown (Cmd+1)",
+    "vw_split_title": "Editor e anteprima affiancati (Cmd+2)",
+    "vw_preview_title": "Solo lettura anteprima HTML (Cmd+3)",
+    "vw_corkboard_title": "Lavagna a schede Corkboard (Cmd+4)",
+    "sb_total_tooltip": "Conteggio parole complessivo del manoscritto",
+    "sb_chapter_tooltip": "Parole nel capitolo attivo",
+    "sb_session_tooltip": "Parole scritte nella sessione di oggi",
+    "palette_cat_format": "Formattazione",
+    "palette_no_results": "Nessun comando o capitolo trovato"
   },
   "es": {
     "chapter": "Capítulo",
     "cancel": "Cancelar",
     "loading": "Cargando…",
-
     "focus_exit_title": "Salir del modo sin distracciones (Esc)",
     "focus_toggle_font_title": "Alternar fuente: Máquina de escribir / Serif",
     "focus_dim_off": "👁️ Foco: Desactivado",
@@ -865,9 +1034,11 @@ const I18N = {
     "recent_missing_desc": "La carpeta de este libro ya no existe en el disco:",
     "recent_missing_prompt": "¿Deseas eliminarlo de la lista de recientes?",
     "recent_remove_btn": "Eliminar de recientes",
-
     "btn_new_project": "✨ Nuevo libro…",
     "btn_new_project_title": "Crear un nuevo proyecto de libro (carpeta y book.yaml)",
+    "toggle_sidebar_title": "Mostrar/Ocultar barra lateral (Cmd+\\)",
+    "hide_sidebar_title": "Ocultar barra lateral (Cmd+\\)",
+    "show_sidebar_title": "Mostrar barra lateral (Cmd+\\)",
     "btn_open": "Abrir…",
     "btn_open_title": "Abrir una carpeta de libro existente o importar un archivo",
     "btn_new_chapter": "＋ Nuevo capítulo",
@@ -1085,6 +1256,7 @@ const I18N = {
     "pub_verso": "Verso (Izquierda)",
     "tb_bold": "Negrita (Cmd+B)",
     "tb_italic": "Cursiva (Cmd+I)",
+    "tb_h1": "Título (H1)",
     "tb_h2": "Subtítulo (H2)",
     "tb_h3": "Sección (H3)",
     "tb_quote": "Cita (>)",
@@ -1100,7 +1272,7 @@ const I18N = {
     "table_insert": "Insertar",
     "table_col_prefix": "Columna",
     "table_cell_prefix": "Celda",
-    "welcome_version": "Versión 1.0.0-alpha.1",
+    "welcome_version": "Versión 1.0.0-alpha.2",
     "welcome_tutorial_link": "Mostrar tutorial de PubCraft",
     "welcome_shortcuts_link": "Ayuda y atajos de teclado",
     "welcome_btn_new": "✨ Nuevo Libro…",
@@ -1160,13 +1332,83 @@ const I18N = {
     "note_del_confirm": "¿Eliminar la nota \"{title}\" del cuaderno?",
     "note_convert_confirm": "¿Convertir esta nota en un capítulo oficial del libro? Se añadirá al índice y a book.yaml.",
     "note_inserted": "¡Insertado en el capítulo!",
-    "btn_delete": "Eliminar"
+    "btn_delete": "Eliminar",
+    "export_label": "Exportar",
+    "btn_export_dropdown_title": "Opciones de exportación y vista previa de publicación",
+    "hint_pub_preview": "EPUB para Kindle y PDF tipográfico hojeable",
+    "hint_print": "Formatos 5x8, 6x9, márgenes y hojas de estilo",
+    "hint_kindle": "Compilar archivo .epub listo para Amazon KDP",
+    "hint_watch": "Vista previa en vivo sincronizada con cada guardado",
+    "typography_label": "Tipografía",
+    "btn_typography_title": "Estilo tipográfico y capitulares",
+    "typography_section_style": "Estilo Tipográfico",
+    "typography_section_opening": "Inicio de Capítulo",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Dividido",
+    "vw_preview_short": "Lectura",
+    "vw_corkboard_short": "Tarjetas",
+    "btn_notes_label": "Notas",
+    "btn_focus_label": "Sin distracciones",
+    "sb_words_total": "palabras totales",
+    "sb_words_chapter": "en el capítulo",
+    "sb_words_today": "hoy",
+    "sb_reading_time": "lectura",
+    "sb_saved": "Guardado",
+    "sb_palette": "Comandos",
+    "palette_placeholder": "Buscar capítulos, notas o comandos… (Esc para cerrar)",
+    "palette_cat_chapters": "Capítulos",
+    "palette_cat_notes": "Notas",
+    "palette_cat_actions": "Acciones",
+    "palette_cat_format": "Formato",
+    "palette_no_results": "No se encontraron comandos o capítulos",
+    "btn_palette_title": "Buscar capítulos, notas o comandos (Cmd+K)",
+    "vw_corkboard": "Tarjetas",
+    "corkboard_title": "Tablero de Tarjetas",
+    "corkboard_search_placeholder": "Buscar entre tarjetas…",
+    "corkboard_add": "+ Nuevo Capítulo",
+    "cb_filter_all": "Todos",
+    "cb_filter_bozza": "🟡 Borrador",
+    "cb_filter_revisione": "🔵 Revisión",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Guardar",
+    "btn_save_synopsis": "Guardar Sinopsis",
+    "nc_type_copyright": "Copyright / Colofón",
+    "nc_type_prologue": "Prólogo",
+    "nc_type_epilogue": "Epílogo",
+    "nc_summary_label": "Sinopsis del capítulo",
+    "nc_summary_ph": "Breve resumen o recordatorio de la escena...",
+    "default_copyright": "Todos los derechos reservados.",
+    "default_prologue": "Prólogo",
+    "default_epilogue": "Epílogo",
+    "synopsis_tooltip": "Sinopsis / recordatorio del capítulo",
+    "synopsis_modal_title": "Sinopsis del Capítulo",
+    "synopsis_modal_subtitle": "Breve resumen de la escena (guardado en frontmatter).",
+    "synopsis_badge_label": "Sinopsis",
+    "total_words_tooltip": "Recuento total de palabras del manuscrito",
+    "session_words_tooltip": "Palabras escritas en esta sesión de trabajo",
+    "session_today_short": "hoy",
+    "book_menu_rename": "Renombrar libro…",
+    "book_menu_close": "Cerrar libro y volver a la biblioteca",
+    "settings_language": "Idioma de la interfaz",
+    "settings_shortcuts": "Guía y atajos",
+    "settings_report": "Reportar un problema…",
+    "btn_settings_title": "Ajustes y preferencias",
+    "vw_editor_tooltip": "Solo Editor Markdown (Cmd+1)",
+    "vw_split_tooltip": "Editor y vista previa lado a lado (Cmd+2)",
+    "vw_preview_tooltip": "Solo lectura HTML (Cmd+3)",
+    "vw_corkboard_tooltip": "Tablero de tarjetas (Cmd+4)",
+    "vw_editor_title": "Solo Editor Markdown (Cmd+1)",
+    "vw_split_title": "Editor y vista previa lado a lado (Cmd+2)",
+    "vw_preview_title": "Solo lectura HTML (Cmd+3)",
+    "vw_corkboard_title": "Tablero de tarjetas (Cmd+4)",
+    "sb_total_tooltip": "Recuento total de palabras del manuscrito",
+    "sb_chapter_tooltip": "Palabras en el capítulo activo",
+    "sb_session_tooltip": "Palabras escritas en la sesión de hoy"
   },
   "fr": {
     "chapter": "Chapitre",
     "cancel": "Annuler",
     "loading": "Chargement…",
-
     "focus_exit_title": "Quitter le mode sans distraction (Échap)",
     "focus_toggle_font_title": "Changer la police: Machine à écrire / Sérif",
     "focus_dim_off": "👁️ Focus: Désactivé",
@@ -1189,9 +1431,11 @@ const I18N = {
     "recent_missing_desc": "Le dossier de ce livre n'existe plus sur le disque :",
     "recent_missing_prompt": "Voulez-vous le retirer de la liste des récents ?",
     "recent_remove_btn": "Retirer des récents",
-
     "btn_new_project": "✨ Nouveau livre…",
     "btn_new_project_title": "Créer un nouveau projet de livre (dossier et book.yaml)",
+    "toggle_sidebar_title": "Afficher/Masquer la barre latérale (Cmd+\\)",
+    "hide_sidebar_title": "Masquer la barre latérale (Cmd+\\)",
+    "show_sidebar_title": "Afficher la barre latérale (Cmd+\\)",
     "btn_open": "Ouvrir…",
     "btn_open_title": "Ouvrir un dossier de livre existant ou importer un fichier",
     "btn_new_chapter": "＋ Nouveau chapitre",
@@ -1409,6 +1653,7 @@ const I18N = {
     "pub_verso": "Verso (Gauche)",
     "tb_bold": "Gras (Cmd+B)",
     "tb_italic": "Italique (Cmd+I)",
+    "tb_h1": "Titre (H1)",
     "tb_h2": "Sous-titre (H2)",
     "tb_h3": "Section (H3)",
     "tb_quote": "Citation (>)",
@@ -1424,7 +1669,7 @@ const I18N = {
     "table_insert": "Insérer",
     "table_col_prefix": "Colonne",
     "table_cell_prefix": "Cellule",
-    "welcome_version": "Version 1.0.0-alpha.1",
+    "welcome_version": "Version 1.0.0-alpha.2",
     "welcome_tutorial_link": "Afficher le didacticiel PubCraft",
     "welcome_shortcuts_link": "Aide et raccourcis clavier",
     "welcome_btn_new": "✨ Nouveau Livre…",
@@ -1484,13 +1729,83 @@ const I18N = {
     "note_del_confirm": "Supprimer la note \"{title}\" du carnet ?",
     "note_convert_confirm": "Convertir cette note en chapitre officiel du livre ? Elle sera ajoutée à la table des matières et à book.yaml.",
     "note_inserted": "Inséré dans le chapitre !",
-    "btn_delete": "Supprimer"
+    "btn_delete": "Supprimer",
+    "export_label": "Exporter",
+    "btn_export_dropdown_title": "Options d'exportation et prévisualisation",
+    "hint_pub_preview": "Vrai EPUB Kindle et PDF typographique feuilletable",
+    "hint_print": "Formats 5x8, 6x9, marges et feuilles de style",
+    "hint_kindle": "Compiler un fichier .epub prêt pour Amazon KDP",
+    "hint_watch": "Aperçu en direct synchronisé à chaque enregistrement",
+    "typography_label": "Typographie",
+    "btn_typography_title": "Style typographique et lettrines",
+    "typography_section_style": "Style Typographique",
+    "typography_section_opening": "Début de Chapitre",
+    "vw_editor_short": "Éditeur",
+    "vw_split_short": "Côte à côte",
+    "vw_preview_short": "Lecture",
+    "vw_corkboard_short": "Fiches",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Plein écran",
+    "sb_words_total": "mots au total",
+    "sb_words_chapter": "dans le chapitre",
+    "sb_words_today": "aujourd'hui",
+    "sb_reading_time": "lecture",
+    "sb_saved": "Enregistré",
+    "sb_palette": "Commandes",
+    "palette_placeholder": "Rechercher chapitres, notes ou commandes… (Échap)",
+    "palette_cat_chapters": "Chapitres",
+    "palette_cat_notes": "Notes",
+    "palette_cat_actions": "Actions",
+    "palette_cat_format": "Formatage",
+    "palette_no_results": "Aucune commande ou chapitre trouvé",
+    "btn_palette_title": "Rechercher chapitres, notes ou commandes (Cmd+K)",
+    "vw_corkboard": "Fiches",
+    "corkboard_title": "Tableau de Fiches",
+    "corkboard_search_placeholder": "Rechercher parmi les fiches…",
+    "corkboard_add": "+ Nouveau Chapitre",
+    "cb_filter_all": "Tous",
+    "cb_filter_bozza": "🟡 Brouillon",
+    "cb_filter_revisione": "🔵 Révision",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Enregistrer",
+    "btn_save_synopsis": "Enregistrer le synopsis",
+    "nc_type_copyright": "Copyright / Colophon",
+    "nc_type_prologue": "Prologue",
+    "nc_type_epilogue": "Épilogue",
+    "nc_summary_label": "Synopsis du chapitre",
+    "nc_summary_ph": "Court résumé ou rappel de la scène...",
+    "default_copyright": "Tous droits réservés.",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Épilogue",
+    "synopsis_tooltip": "Synopsis et rappel de la scène",
+    "synopsis_modal_title": "Synopsis du Chapitre",
+    "synopsis_modal_subtitle": "Court résumé de la scène (enregistré dans le frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Nombre total de mots du manuscrit",
+    "session_words_tooltip": "Mots écrits durant cette session",
+    "session_today_short": "aujourd'hui",
+    "book_menu_rename": "Renommer le livre…",
+    "book_menu_close": "Fermer le livre et revenir à la bibliothèque",
+    "settings_language": "Langue de l'interface",
+    "settings_shortcuts": "Guide et raccourcis",
+    "settings_report": "Signaler un problème…",
+    "btn_settings_title": "Paramètres et préférences",
+    "vw_editor_tooltip": "Éditeur Markdown seul (Cmd+1)",
+    "vw_split_tooltip": "Éditeur et aperçu côte à côte (Cmd+2)",
+    "vw_preview_tooltip": "Lecture seule HTML (Cmd+3)",
+    "vw_corkboard_tooltip": "Tableau de fiches (Cmd+4)",
+    "vw_editor_title": "Éditeur Markdown seul (Cmd+1)",
+    "vw_split_title": "Éditeur et aperçu côte à côte (Cmd+2)",
+    "vw_preview_title": "Lecture seule HTML (Cmd+3)",
+    "vw_corkboard_title": "Tableau de fiches (Cmd+4)",
+    "sb_total_tooltip": "Nombre total de mots du manuscrit",
+    "sb_chapter_tooltip": "Mots dans le chapitre actif",
+    "sb_session_tooltip": "Mots écrits durant la session"
   },
   "de": {
     "chapter": "Kapitel",
     "cancel": "Abbrechen",
     "loading": "Laden…",
-
     "focus_exit_title": "Fokusmodus beenden (Esc)",
     "focus_toggle_font_title": "Schrift umschalten: Schreibmaschine / Serif",
     "focus_dim_off": "👁️ Fokus: Aus",
@@ -1513,9 +1828,11 @@ const I18N = {
     "recent_missing_desc": "Der Ordner für dieses Buch existiert nicht mehr auf der Festplatte:",
     "recent_missing_prompt": "Möchten Sie es aus den letzten Projekten entfernen?",
     "recent_remove_btn": "Aus Liste entfernen",
-
     "btn_new_project": "✨ Neues Buch…",
     "btn_new_project_title": "Neues Buchprojekt erstellen (Ordner und book.yaml)",
+    "toggle_sidebar_title": "Seitenleiste ein-/ausblenden (Cmd+\\)",
+    "hide_sidebar_title": "Seitenleiste ausblenden (Cmd+\\)",
+    "show_sidebar_title": "Seitenleiste einblenden (Cmd+\\)",
     "btn_open": "Öffnen…",
     "btn_open_title": "Vorhandenen Buchordner öffnen oder Datei importieren",
     "btn_new_chapter": "＋ Neues Kapitel",
@@ -1733,6 +2050,7 @@ const I18N = {
     "pub_verso": "Links (Verso)",
     "tb_bold": "Fett (Cmd+B)",
     "tb_italic": "Kursiv (Cmd+I)",
+    "tb_h1": "Titel (H1)",
     "tb_h2": "Untertitel (H2)",
     "tb_h3": "Abschnitt (H3)",
     "tb_quote": "Zitat (>)",
@@ -1748,7 +2066,7 @@ const I18N = {
     "table_insert": "Einfügen",
     "table_col_prefix": "Spalte",
     "table_cell_prefix": "Zelle",
-    "welcome_version": "Version 1.0.0-alpha.1",
+    "welcome_version": "Version 1.0.0-alpha.2",
     "welcome_tutorial_link": "PubCraft-Tutorial anzeigen",
     "welcome_shortcuts_link": "Hilfe & Tastaturkürzel",
     "welcome_btn_new": "✨ Neues Buch…",
@@ -1808,13 +2126,83 @@ const I18N = {
     "note_del_confirm": "Notiz \"{title}\" aus dem Notizbuch löschen?",
     "note_convert_confirm": "Diese Notiz in ein offizielles Buchkapitel umwandeln? Sie wird dem Inhaltsverzeichnis und book.yaml hinzugefügt.",
     "note_inserted": "In das Kapitel eingefügt!",
-    "btn_delete": "Löschen"
+    "btn_delete": "Löschen",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
+    "vw_corkboard": "📋 Cards",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
+    "default_copyright": "Copyright & Colophon",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   },
   "pt": {
     "chapter": "Capítulo",
     "cancel": "Cancelar",
     "loading": "Carregando…",
-
     "focus_exit_title": "Sair do modo de foco (Esc)",
     "focus_toggle_font_title": "Alternar fonte: Máquina de escrever / Serif",
     "focus_dim_off": "👁️ Foco: Desativado",
@@ -1837,9 +2225,11 @@ const I18N = {
     "recent_missing_desc": "A pasta deste livro não existe mais no disco:",
     "recent_missing_prompt": "Deseja removê-lo dos projetos recentes?",
     "recent_remove_btn": "Remover dos recentes",
-
     "btn_new_project": "✨ Novo livro…",
     "btn_new_project_title": "Criar um novo projeto de livro (pasta e book.yaml)",
+    "toggle_sidebar_title": "Mostrar/Ocultar barra lateral (Cmd+\\)",
+    "hide_sidebar_title": "Ocultar barra lateral (Cmd+\\)",
+    "show_sidebar_title": "Mostrar barra lateral (Cmd+\\)",
     "btn_open": "Abrir…",
     "btn_open_title": "Abrir uma pasta de livro existente ou importar um arquivo",
     "btn_new_chapter": "＋ Novo capítulo",
@@ -2057,6 +2447,7 @@ const I18N = {
     "pub_verso": "Verso (Esquerda)",
     "tb_bold": "Negrito (Cmd+B)",
     "tb_italic": "Itálico (Cmd+I)",
+    "tb_h1": "Título (H1)",
     "tb_h2": "Subtítulo (H2)",
     "tb_h3": "Seção (H3)",
     "tb_quote": "Citação (>)",
@@ -2072,7 +2463,7 @@ const I18N = {
     "table_insert": "Inserir",
     "table_col_prefix": "Coluna",
     "table_cell_prefix": "Célula",
-    "welcome_version": "Versão 1.0.0-alpha.1",
+    "welcome_version": "Versão 1.0.0-alpha.2",
     "welcome_tutorial_link": "Mostrar tutorial do PubCraft",
     "welcome_shortcuts_link": "Ajuda e atalhos de teclado",
     "welcome_btn_new": "✨ Novo Livro…",
@@ -2132,13 +2523,83 @@ const I18N = {
     "note_del_confirm": "Excluir a nota \"{title}\" do caderno?",
     "note_convert_confirm": "Converter esta nota em um capítulo oficial do livro? Ela será adicionada ao índice e ao book.yaml.",
     "note_inserted": "Inserido no capítulo!",
-    "btn_delete": "Excluir"
+    "btn_delete": "Excluir",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
+    "vw_corkboard": "📋 Cards",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
+    "default_copyright": "Copyright & Colophon",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   },
   "zh": {
     "chapter": "第",
     "cancel": "取消",
     "loading": "加载中…",
-
     "focus_exit_title": "退出免打扰模式 (Esc)",
     "focus_toggle_font_title": "切换字体：打字机 / 衬线体",
     "focus_dim_off": "👁️ 专注：关闭",
@@ -2161,9 +2622,11 @@ const I18N = {
     "recent_missing_desc": "此图书所在的磁盘文件夹已不存在：",
     "recent_missing_prompt": "是否将其从最近项目中移除？",
     "recent_remove_btn": "从列表中移除",
-
     "btn_new_project": "✨ 新建图书…",
     "btn_new_project_title": "创建新图书项目 (生成文件夹与 book.yaml)",
+    "toggle_sidebar_title": "显示/隐藏侧边栏 (Cmd+\\)",
+    "hide_sidebar_title": "隐藏侧边栏 (Cmd+\\)",
+    "show_sidebar_title": "显示侧边栏 (Cmd+\\)",
     "btn_open": "打开…",
     "btn_open_title": "打开已有图书文件夹或导入文件",
     "btn_new_chapter": "＋ 新建章节",
@@ -2381,6 +2844,7 @@ const I18N = {
     "pub_verso": "左页（背面）",
     "tb_bold": "加粗 (Cmd+B)",
     "tb_italic": "斜体 (Cmd+I)",
+    "tb_h1": "一级标题 (H1)",
     "tb_h2": "二级标题 (H2)",
     "tb_h3": "三级标题 (H3)",
     "tb_quote": "引用 (>)",
@@ -2396,7 +2860,7 @@ const I18N = {
     "table_insert": "插入",
     "table_col_prefix": "列",
     "table_cell_prefix": "单元格",
-    "welcome_version": "版本 1.0.0-alpha.1",
+    "welcome_version": "版本 1.0.0-alpha.2",
     "welcome_tutorial_link": "显示 PubCraft 教程",
     "welcome_shortcuts_link": "帮助与键盘快捷键",
     "welcome_btn_new": "✨ 新建图书…",
@@ -2456,13 +2920,83 @@ const I18N = {
     "note_del_confirm": "确定从笔记本中删除 \"{title}\"？",
     "note_convert_confirm": "是否将此笔记转换为正式章节？将添加到目录和 book.yaml。",
     "note_inserted": "已插入章节！",
-    "btn_delete": "删除"
+    "btn_delete": "删除",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
+    "vw_corkboard": "📋 Cards",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
+    "default_copyright": "Copyright & Colophon",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   },
   "ja": {
     "chapter": "第",
     "cancel": "キャンセル",
     "loading": "読み込み中…",
-
     "focus_exit_title": "集中モードを終了 (Esc)",
     "focus_toggle_font_title": "フォント切替: タイプライター / 明朝体",
     "focus_dim_off": "👁️ 集中: オフ",
@@ -2485,9 +3019,11 @@ const I18N = {
     "recent_missing_desc": "この書籍のフォルダはディスク上に存在しません:",
     "recent_missing_prompt": "最近のプロジェクトから削除しますか？",
     "recent_remove_btn": "一覧から削除",
-
     "btn_new_project": "✨ 新規書籍…",
     "btn_new_project_title": "新しい書籍プロジェクトを作成 (フォルダと book.yaml)",
+    "toggle_sidebar_title": "サイドバーの表示/非表示 (Cmd+\\)",
+    "hide_sidebar_title": "サイドバーを非表示 (Cmd+\\)",
+    "show_sidebar_title": "サイドバーを表示 (Cmd+\\)",
     "btn_open": "開く…",
     "btn_open_title": "既存の書籍フォルダを開く、またはファイルをインポート",
     "btn_new_chapter": "＋ 新規章",
@@ -2705,6 +3241,7 @@ const I18N = {
     "pub_verso": "偶数ページ（左）",
     "tb_bold": "太字 (Cmd+B)",
     "tb_italic": "斜体 (Cmd+I)",
+    "tb_h1": "見出し 1 (H1)",
     "tb_h2": "見出し 2 (H2)",
     "tb_h3": "見出し 3 (H3)",
     "tb_quote": "引用 (>)",
@@ -2720,7 +3257,7 @@ const I18N = {
     "table_insert": "挿入",
     "table_col_prefix": "列",
     "table_cell_prefix": "セル",
-    "welcome_version": "バージョン 1.0.0-alpha.1",
+    "welcome_version": "バージョン 1.0.0-alpha.2",
     "welcome_tutorial_link": "PubCraft チュートリアルを表示",
     "welcome_shortcuts_link": "ヘルプとキーボードショートカット",
     "welcome_btn_new": "✨ 新規書籍…",
@@ -2780,13 +3317,83 @@ const I18N = {
     "note_del_confirm": "ノートブックから \"{title}\" を削除しますか？",
     "note_convert_confirm": "このメモを正式な章に変換しますか？目次と book.yaml に追加されます。",
     "note_inserted": "章に挿入しました！",
-    "btn_delete": "削除"
+    "btn_delete": "削除",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
+    "vw_corkboard": "📋 Cards",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
+    "default_copyright": "Copyright & Colophon",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   },
   "ru": {
     "chapter": "Глава",
     "cancel": "Отмена",
     "loading": "Загрузка…",
-
     "focus_exit_title": "Выйти из режима концентрации (Esc)",
     "focus_toggle_font_title": "Переключить шрифт: Печатная машинка / С засечками",
     "focus_dim_off": "👁️ Фокус: Выкл",
@@ -2809,9 +3416,11 @@ const I18N = {
     "recent_missing_desc": "Папка этой книги больше не существует на диске:",
     "recent_missing_prompt": "Удалить её из списка недавних проектов?",
     "recent_remove_btn": "Удалить из списка",
-
     "btn_new_project": "✨ Новая книга…",
     "btn_new_project_title": "Создать новый проект книги (папка и book.yaml)",
+    "toggle_sidebar_title": "Показать/скрыть боковую панель (Cmd+\\)",
+    "hide_sidebar_title": "Скрыть боковую панель (Cmd+\\)",
+    "show_sidebar_title": "Показать боковую панель (Cmd+\\)",
     "btn_open": "Открыть…",
     "btn_open_title": "Открыть папку с книгой или импортировать файл",
     "btn_new_chapter": "＋ Новая глава",
@@ -3029,6 +3638,7 @@ const I18N = {
     "pub_verso": "Четная (Слева)",
     "tb_bold": "Жирный (Cmd+B)",
     "tb_italic": "Курсив (Cmd+I)",
+    "tb_h1": "Заголовок (H1)",
     "tb_h2": "Подзаголовок (H2)",
     "tb_h3": "Раздел (H3)",
     "tb_quote": "Цитата (>)",
@@ -3044,7 +3654,7 @@ const I18N = {
     "table_insert": "Вставить",
     "table_col_prefix": "Столбец",
     "table_cell_prefix": "Ячейка",
-    "welcome_version": "Версия 1.0.0-alpha.1",
+    "welcome_version": "Версия 1.0.0-alpha.2",
     "welcome_tutorial_link": "Показать руководство PubCraft",
     "welcome_shortcuts_link": "Справка и сочетания клавиш",
     "welcome_btn_new": "✨ Новая книга…",
@@ -3104,13 +3714,83 @@ const I18N = {
     "note_del_confirm": "Удалить заметку \"{title}\" из блокнота?",
     "note_convert_confirm": "Преобразовать эту заметку в официальную главу? Она будет добавлена в оглавление и book.yaml.",
     "note_inserted": "Вставлено в главу!",
-    "btn_delete": "Удалить"
+    "btn_delete": "Удалить",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
+    "vw_corkboard": "📋 Cards",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
+    "default_copyright": "Copyright & Colophon",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   },
   "ar": {
     "chapter": "الفصل",
     "cancel": "إلغاء",
     "loading": "جاري التحميل…",
-
     "focus_exit_title": "الخروج من وضع التركيز (Esc)",
     "focus_toggle_font_title": "تبديل الخط: آلة كاتبة / Serif",
     "focus_dim_off": "👁️ تركيز: متوقف",
@@ -3133,9 +3813,11 @@ const I18N = {
     "recent_missing_desc": "مجلد هذا الكتاب لم يعد موجوداً على القرص:",
     "recent_missing_prompt": "هل تريد إزالته من المشاريع الأخيرة؟",
     "recent_remove_btn": "إزالة من الأخيرة",
-
     "btn_new_project": "✨ كتاب جديد…",
     "btn_new_project_title": "إنشاء مشروع كتاب جديد (مجلد وملف book.yaml)",
+    "toggle_sidebar_title": "إظهار/إخفاء الشريط الجانبي (Cmd+\\)",
+    "hide_sidebar_title": "إخفاء الشريط الجانبي (Cmd+\\)",
+    "show_sidebar_title": "إظهار الشريط الجانبي (Cmd+\\)",
     "btn_open": "فتح…",
     "btn_open_title": "فتح مجلد كتاب موجود أو استيراد ملف",
     "btn_new_chapter": "＋ فصل جديد",
@@ -3353,6 +4035,7 @@ const I18N = {
     "pub_verso": "يسار (Verso)",
     "tb_bold": "عريض (Cmd+B)",
     "tb_italic": "مائل (Cmd+I)",
+    "tb_h1": "عنوان رئيسي (H1)",
     "tb_h2": "عنوان فرعي (H2)",
     "tb_h3": "قسم فرعي (H3)",
     "tb_quote": "اقتباس (>)",
@@ -3368,7 +4051,7 @@ const I18N = {
     "table_insert": "إدراج",
     "table_col_prefix": "عمود",
     "table_cell_prefix": "خلية",
-    "welcome_version": "الإصدار 1.0.0-alpha.1",
+    "welcome_version": "الإصدار 1.0.0-alpha.2",
     "welcome_tutorial_link": "عرض دليل PubCraft التعليمي",
     "welcome_shortcuts_link": "المساعدة واختصارات لوحة المفاتيح",
     "welcome_btn_new": "✨ كتاب جديد…",
@@ -3428,7 +4111,78 @@ const I18N = {
     "note_del_confirm": "هل أنت متأكد من حذف الملاحظة \"{title}\" من دفتر الملاحظات؟",
     "note_convert_confirm": "هل ترغب في تحويل هذه الملاحظة إلى فصل رسمي؟ ستُضاف إلى الفهرس وإلى book.yaml.",
     "note_inserted": "تم الإدراج في الفصل!",
-    "btn_delete": "حذف"
+    "btn_delete": "حذف",
+    "export_label": "Export",
+    "btn_export_dropdown_title": "Export options and book preview",
+    "hint_pub_preview": "Real Kindle EPUB and flip-ready print PDF",
+    "hint_print": "5x8, 6x9 formats, gutter margins and print PDF",
+    "hint_kindle": "Compile .epub file ready for Amazon KDP",
+    "hint_watch": "Real-time preview synchronized on every save",
+    "typography_label": "Typography",
+    "btn_typography_title": "Book typography style and chapter opening",
+    "typography_section_style": "Book Style",
+    "typography_section_opening": "Chapter Opening",
+    "vw_editor_short": "Editor",
+    "vw_split_short": "Split",
+    "vw_preview_short": "Preview",
+    "vw_corkboard_short": "Cards",
+    "btn_notes_label": "Notes",
+    "btn_focus_label": "Focus",
+    "sb_words_total": "total words",
+    "sb_words_chapter": "in chapter",
+    "sb_words_today": "today",
+    "sb_reading_time": "reading",
+    "sb_saved": "Saved",
+    "sb_palette": "Commands",
+    "palette_placeholder": "Search chapters, notes or commands… (Esc to close)",
+    "palette_cat_chapters": "Chapters",
+    "palette_cat_notes": "Notebook Notes",
+    "palette_cat_actions": "Actions & Views",
+    "btn_palette_title": "Search chapters, notes or commands (Cmd+K)",
+    "vw_corkboard": "📋 Cards",
+    "corkboard_title": "Corkboard",
+    "corkboard_search_placeholder": "Search cards…",
+    "corkboard_add": "+ New Chapter",
+    "cb_filter_all": "All",
+    "cb_filter_bozza": "🟡 Draft",
+    "cb_filter_revisione": "🔵 In Review",
+    "cb_filter_finale": "🟢 Final",
+    "btn_save": "Save",
+    "btn_save_synopsis": "Save Synopsis",
+    "nc_type_copyright": "©️ Copyright / Colophon (Front matter)",
+    "nc_type_prologue": "🌅 Prologue",
+    "nc_type_epilogue": "🌌 Epilogue",
+    "nc_summary_label": "Synopsis / Note (optional)",
+    "nc_summary_ph": "e.g. Marcus discovers the secret letter in the attic...",
+    "default_copyright": "Copyright & Colophon",
+    "default_prologue": "Prologue",
+    "default_epilogue": "Epilogue",
+    "synopsis_tooltip": "Chapter synopsis / index card",
+    "synopsis_modal_title": "Chapter Synopsis",
+    "synopsis_modal_subtitle": "A short summary or index card for this scene (stored in chapter Markdown frontmatter).",
+    "synopsis_badge_label": "Synopsis",
+    "total_words_tooltip": "Total word count of the book",
+    "session_words_tooltip": "Words written in this working session",
+    "session_today_short": "today",
+    "book_menu_rename": "Rename book…",
+    "book_menu_close": "Close book and return to library",
+    "settings_language": "Interface Language",
+    "settings_shortcuts": "Guide & Shortcuts",
+    "settings_report": "Report an Issue…",
+    "btn_settings_title": "Settings and Preferences",
+    "vw_editor_tooltip": "Markdown Editor only (Cmd+1)",
+    "vw_split_tooltip": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_tooltip": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_tooltip": "Corkboard cards view (Cmd+4)",
+    "vw_editor_title": "Markdown Editor only (Cmd+1)",
+    "vw_split_title": "Editor and live preview side by side (Cmd+2)",
+    "vw_preview_title": "Reading mode (HTML preview only) (Cmd+3)",
+    "vw_corkboard_title": "Corkboard cards view (Cmd+4)",
+    "sb_total_tooltip": "Total manuscript word count",
+    "sb_chapter_tooltip": "Words in active chapter",
+    "sb_session_tooltip": "Words written in today's session",
+    "palette_cat_format": "Formatting",
+    "palette_no_results": "No commands or chapters found"
   }
 };
 
@@ -3453,17 +4207,336 @@ function detectLanguage() {
   return "en";
 }
 
+function extractChapterSummary(text) {
+  if (!text) return "";
+  const fmMatch = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fmMatch) return "";
+  const lines = fmMatch[1].split(/\r?\n/);
+  for (const line of lines) {
+    const m = line.match(/^(?:summary|synopsis):\s*(.*)$/i);
+    if (m) {
+      return unquoteYamlScalar(m[1].trim());
+    }
+  }
+  return "";
+}
+
+function setChapterSummaryInEditor(newSummary) {
+  if (!ta) return;
+  const text = ta.value || "";
+  newSummary = newSummary.trim();
+  const fmMatch = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/);
+  let newText = "";
+  if (fmMatch) {
+    let fmLines = fmMatch[1].split(/\r?\n/);
+    let found = false;
+    fmLines = fmLines.map((line) => {
+      if (/^(?:summary|synopsis):/i.test(line.trim())) {
+        found = true;
+        return newSummary ? `summary: ${JSON.stringify(newSummary)}` : null;
+      }
+      return line;
+    }).filter((line) => line !== null);
+
+    if (!found && newSummary) {
+      fmLines.push(`summary: ${JSON.stringify(newSummary)}`);
+    }
+    const rest = text.slice(fmMatch[0].length);
+    newText = `---\n${fmLines.join("\n")}\n---${rest}`;
+  } else {
+    if (newSummary) {
+      newText = `---\nsummary: ${JSON.stringify(newSummary)}\n---\n\n${text}`;
+    } else {
+      newText = text;
+    }
+  }
+  if (newText !== text) {
+    ta.value = newText;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+function setChapterTitleInEditor(newTitle) {
+  if (!ta) return;
+  const text = ta.value || "";
+  newTitle = (newTitle || "").trim();
+  const fmMatch = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/);
+  let newText = "";
+  if (fmMatch) {
+    let fmLines = fmMatch[1].split(/\r?\n/);
+    let found = false;
+    fmLines = fmLines.map((line) => {
+      if (/^title:/i.test(line.trim())) {
+        found = true;
+        return newTitle ? `title: ${JSON.stringify(newTitle)}` : null;
+      }
+      return line;
+    }).filter((line) => line !== null);
+
+    if (!found && newTitle) {
+      fmLines.push(`title: ${JSON.stringify(newTitle)}`);
+    }
+    const rest = text.slice(fmMatch[0].length);
+    newText = `---\n${fmLines.join("\n")}\n---${rest}`;
+  } else {
+    if (/^#\s+.*/m.test(text)) {
+      newText = text.replace(/^#\s+.*$/m, `# ${newTitle}`);
+    } else if (newTitle) {
+      newText = `---\ntitle: ${JSON.stringify(newTitle)}\n---\n\n${text}`;
+    } else {
+      newText = text;
+    }
+  }
+  if (newText !== text) {
+    ta.value = newText;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+function updateSelectionWordCount() {
+  if (!$("sbChapterWordsVal")) return;
+  const curCh = state?.book?.chapters?.find((x) => x.file === currentFile);
+  const chWords = curCh ? (curCh.words || 0) : 0;
+  if (!ta) {
+    $("sbChapterWordsVal").textContent = chWords.toLocaleString(currentLang);
+    return;
+  }
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  if (start !== undefined && end !== undefined && end > start) {
+    const selText = ta.value.substring(start, end).trim();
+    const selCount = (selText.match(/\S+/g) || []).length;
+    if (selCount > 0) {
+      const selLabel = currentLang === "it" ? "selezionate" : "selected";
+      $("sbChapterWordsVal").textContent = `${chWords.toLocaleString(currentLang)} (${selCount.toLocaleString(currentLang)} ${selLabel})`;
+      return;
+    }
+  }
+  $("sbChapterWordsVal").textContent = chWords.toLocaleString(currentLang);
+}
+
+let sessionInitialWords = null;
+let sessionInitialVault = null;
+
+function totalBookWords(b) {
+  if (!b || !b.chapters) return 0;
+  return b.chapters.reduce((sum, ch) => sum + (ch.words || 0), 0);
+}
+
+function updateBookStats() {
+  const b = state.book;
+  if (!b || !b.chapters) {
+    if ($("bookStats")) $("bookStats").style.display = "none";
+    if ($("statusbar")) $("statusbar").classList.add("hidden");
+    return;
+  }
+  if ($("bookStats")) $("bookStats").style.display = "flex";
+  if ($("statusbar")) $("statusbar").classList.remove("hidden");
+
+  const vault = (state && state.vault) || "";
+  const total = totalBookWords(b);
+
+  if (sessionInitialVault !== vault) {
+    sessionInitialVault = vault;
+    const stored = sessionStorage.getItem("pubcraft_sw_" + vault);
+    if (stored !== null && !isNaN(parseInt(stored, 10))) {
+      sessionInitialWords = parseInt(stored, 10);
+    } else {
+      sessionInitialWords = total;
+      try { sessionStorage.setItem("pubcraft_sw_" + vault, String(total)); } catch (_) {}
+    }
+  }
+
+  const diff = total - (sessionInitialWords !== null ? sessionInitialWords : total);
+
+  if ($("totalWordCount")) {
+    $("totalWordCount").textContent = `${total.toLocaleString(currentLang)} ${t("words_short") || "parole"}`;
+  }
+  if ($("sessionWordCount")) {
+    const sign = diff > 0 ? "+" : "";
+    const suffix = t("session_today_short") || "oggi";
+    $("sessionWordCount").textContent = `${sign}${diff.toLocaleString(currentLang)} ${suffix}`;
+    $("sessionWordCount").title = t("session_words_tooltip") || "Parole scritte in questa sessione di lavoro";
+  }
+
+  // Nuova Status Bar inferiore
+  if ($("sbTotalWordsVal")) {
+    $("sbTotalWordsVal").textContent = total.toLocaleString(currentLang);
+  }
+  if ($("sbSessionWordsVal")) {
+    if (diff < 0) {
+      const revLabel = currentLang === "it" ? "revisione" : "revision";
+      $("sbSessionWordsVal").textContent = `−${Math.abs(diff).toLocaleString(currentLang)} ${revLabel}`;
+    } else {
+      const sign = diff > 0 ? "+" : "";
+      $("sbSessionWordsVal").textContent = `${sign}${diff.toLocaleString(currentLang)}`;
+    }
+  }
+  if ($("sbReadingTimeVal")) {
+    const min = Math.max(1, Math.round(total / 250));
+    const bookLabel = currentLang === "it" ? "libro" : "book";
+    $("sbReadingTimeVal").textContent = `~${min} min ${bookLabel}`;
+  }
+  updateSelectionWordCount();
+}
+
+function updateActiveChapterSidebarItem(ch) {
+  if (!ch) return;
+  const li = [...chapterList.children].find((el) => el.dataset.file === ch.file);
+  if (!li) return;
+  const tEl = li.querySelector(".t");
+  if (tEl) {
+    let dot = tEl.querySelector(".chapter-status-dot");
+    if (ch.status) {
+      if (!dot) {
+        dot = document.createElement("span");
+        tEl.insertBefore(dot, tEl.firstChild);
+      }
+      dot.className = `chapter-status-dot status-dot-${ch.status.toLowerCase()}`;
+      dot.title = `Stato: ${ch.status}`;
+    } else if (dot) {
+      dot.remove();
+    }
+  }
+  const wcEl = li.querySelector(".ch-wc");
+  if (wcEl) {
+    const w = typeof ch.words === "number" ? ch.words : 0;
+    wcEl.textContent = `${w.toLocaleString(currentLang)} ${t("words_short") || "parole"}`;
+  }
+  let sumEl = li.querySelector(".ch-sum");
+  if (ch.summary) {
+    if (!sumEl) {
+      const meta = li.querySelector(".ch-meta");
+      if (meta) {
+        sumEl = document.createElement("span");
+        sumEl.className = "ch-sum";
+        meta.appendChild(sumEl);
+      }
+    }
+    if (sumEl) {
+      sumEl.textContent = ch.summary;
+      sumEl.title = ch.summary;
+    }
+  } else if (sumEl) {
+    sumEl.remove();
+  }
+}
+
+function updateSynopsisButton(summary) {
+  const btn = $("btnEditSynopsis");
+  const badge = $("synopsisBadge");
+  if (!btn || !badge) return;
+  if (summary) {
+    btn.classList.add("has-synopsis");
+    badge.textContent = truncPoints(summary, 22);
+    btn.title = summary;
+  } else {
+    btn.classList.remove("has-synopsis");
+    badge.textContent = t("synopsis_badge_label") || "Sinossi";
+    btn.title = t("synopsis_tooltip") || "Sinossi / promemoria del capitolo";
+  }
+}
+
+let targetSynopsisChapterFile = null;
+
+function openSynopsisModal(targetFile) {
+  targetSynopsisChapterFile = (typeof targetFile === "string" && targetFile) ? targetFile : currentFile;
+  if (!targetSynopsisChapterFile) return;
+
+  let currentSummary = "";
+  if (targetSynopsisChapterFile === currentFile && typeof ta !== "undefined" && ta) {
+    currentSummary = extractChapterSummary(ta.value);
+  } else if (state?.book?.chapters) {
+    const ch = state.book.chapters.find((x) => x.file === targetSynopsisChapterFile);
+    if (ch) currentSummary = ch.summary || "";
+  }
+  if ($("synopsisInput")) $("synopsisInput").value = currentSummary;
+  if ($("synopsisModal")) $("synopsisModal").classList.remove("hidden");
+  if ($("synopsisInput")) $("synopsisInput").focus();
+}
+
+function hideSynopsisModal() {
+  if ($("synopsisModal")) $("synopsisModal").classList.add("hidden");
+  targetSynopsisChapterFile = null;
+}
+
+async function saveSynopsisFromModal() {
+  const newSummary = $("synopsisInput") ? $("synopsisInput").value.trim() : "";
+  const fileToSave = targetSynopsisChapterFile || currentFile;
+
+  if (fileToSave === currentFile && typeof ta !== "undefined" && ta) {
+    setChapterSummaryInEditor(newSummary);
+  } else if (fileToSave && state?.book?.chapters) {
+    const ch = state.book.chapters.find((x) => x.file === fileToSave);
+    if (ch) {
+      ch.summary = newSummary;
+      try {
+        const res = await api("/api/chapter?file=" + encodeURIComponent(fileToSave));
+        if (res && res.content !== undefined) {
+          let updated = "";
+          const fmMatch = res.content.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(\r?\n[\s\S]*)$/);
+          if (fmMatch) {
+            let fm = fmMatch[1];
+            const body = fmMatch[2];
+            if (/^(?:summary|synopsis):/mi.test(fm)) {
+              fm = fm.replace(/^(?:summary|synopsis):.*$/mi, newSummary ? `summary: ${JSON.stringify(newSummary)}` : "");
+            } else if (newSummary) {
+              fm = `${fm.trim()}\nsummary: ${JSON.stringify(newSummary)}`;
+            }
+            updated = `---\n${fm.trim()}\n---${body}`;
+          } else {
+            updated = `---\nsummary: ${JSON.stringify(newSummary)}\n---\n\n${res.content}`;
+          }
+          await api("/api/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              file: fileToSave,
+              content: updated,
+              base_version: res.version,
+              vault: (state && state.vault) || "",
+            }),
+          });
+        }
+      } catch (err) {
+        console.error("Errore salvataggio sinossi:", err);
+      }
+    }
+  }
+  hideSynopsisModal();
+  renderBook();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") renderCorkboard();
+}
+
 function updateWordCount(n) {
   if (n === undefined) {
     const val = (typeof ta !== "undefined" && ta) ? (ta.value || "") : "";
-    const body = val.replace(/^---\n[\s\S]*?\n---\n/, "");
+    const body = val.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
     n = (body.trim().match(/\S+/g) || []).length;
   }
   if ($("wordCount")) {
     $("wordCount").textContent = t("words_count", { count: n.toLocaleString(currentLang) });
   }
+  if ($("sbChapterWordsVal")) {
+    $("sbChapterWordsVal").textContent = n.toLocaleString(currentLang);
+  }
   if (typeof isFocusMode !== "undefined" && isFocusMode && $("focusWordCount")) {
     $("focusWordCount").textContent = $("wordCount") ? $("wordCount").textContent : `${n}`;
+  }
+  if (currentFile && state && state.book && state.book.chapters) {
+    const ch = state.book.chapters.find((x) => x.file === currentFile);
+    if (ch) {
+      ch.words = n;
+      if (typeof ta !== "undefined" && ta) {
+        ch.summary = extractChapterSummary(ta.value);
+      }
+      updateActiveChapterSidebarItem(ch);
+      updateSynopsisButton(ch.summary);
+      updateBookStats();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+    renderCorkboard();
+  }
+    }
   }
 }
 
@@ -3499,8 +4572,11 @@ function setLanguage(lang) {
   }
   renderRecentList();
 
+  const isCollapsed = $("app") ? $("app").classList.contains("sidebar-collapsed") : false;
+  updateSidebarToggleBtn(isCollapsed);
+
   const sbSel = $("sceneBreak");
-  if (sbSel && sbSel.options.length >= 4) {
+  if (sbSel && sbSel.options && sbSel.options.length >= 4) {
     const curVal = sbSel.value;
     sbSel.options[0].text = t("sb_asterisks");
     sbSel.options[1].text = t("sb_fleuron");
@@ -3534,11 +4610,74 @@ const fmtTime = () => new Date().toLocaleTimeString(currentLang, { hour: "2-digi
 
 function setState(msg, cls) {
   const el = $("saveState");
-  el.textContent = msg;
-  el.className = cls || "";
+  if (el) {
+    el.textContent = msg;
+    el.className = cls || "";
+  }
   if (typeof isFocusMode !== "undefined" && isFocusMode && $("focusSaveStatus")) {
     $("focusSaveStatus").textContent = msg;
     $("focusSaveStatus").className = "focus-hud-status " + (cls || "");
+  }
+  if ($("sbSaveIndicator")) {
+    const isWorking = cls === "dirty" || cls === "saving" || cls === "busy";
+    const isErr = cls === "err";
+    const prefix = isErr ? "⚠️ " : (isWorking ? "● " : "✓ ");
+    $("sbSaveIndicator").textContent = prefix + msg;
+    $("sbSaveIndicator").className = "sb-item sb-save " + (cls || "");
+  }
+}
+
+/* ------------------------------------------------- toggle sidebar (Obsidian) */
+
+function updateSidebarToggleBtn(collapsed) {
+  const btn = $("btnToggleSidebar");
+  if (!btn) return;
+  btn.classList.toggle("collapsed", !!collapsed);
+  const isMac = (navigator.platform && navigator.platform.toUpperCase().indexOf('MAC') >= 0) || (navigator.userAgent && navigator.userAgent.toUpperCase().indexOf('MAC') >= 0);
+  const shortcut = isMac ? "Cmd+\\" : "Ctrl+\\";
+  const key = collapsed ? "show_sidebar_title" : "hide_sidebar_title";
+  let title = t(key);
+  if (!title || title === key) {
+    title = collapsed ? "Mostra barra laterale (Cmd+\\)" : "Nascondi barra laterale (Cmd+\\)";
+  }
+  if (!isMac) {
+    title = title.replace("Cmd+\\", "Ctrl+\\");
+  }
+  btn.title = title;
+}
+
+function applySidebarCollapsed(collapsed) {
+  const app = $("app");
+  if (app) {
+    app.classList.toggle("sidebar-collapsed", !!collapsed);
+  }
+  updateSidebarToggleBtn(collapsed);
+  try {
+    localStorage.setItem("pubcraft.sidebar_collapsed", collapsed ? "true" : "false");
+  } catch (_) {}
+}
+
+function toggleSidebar(forceState) {
+  const app = $("app");
+  if (!app) return;
+  const isCurrentlyCollapsed = app.classList.contains("sidebar-collapsed");
+  const newState = (typeof forceState === "boolean") ? forceState : !isCurrentlyCollapsed;
+  applySidebarCollapsed(newState);
+}
+
+function initSidebarToggle() {
+  const btn = $("btnToggleSidebar");
+  if (btn) {
+    btn.addEventListener("click", () => toggleSidebar());
+  }
+  let saved = false;
+  try {
+    saved = localStorage.getItem("pubcraft.sidebar_collapsed") === "true";
+  } catch (_) {}
+  if (saved) {
+    applySidebarCollapsed(true);
+  } else {
+    updateSidebarToggleBtn(false);
   }
 }
 
@@ -3550,30 +4689,77 @@ function renderBook() {
   if ($("topbarBookTitle")) $("topbarBookTitle").textContent = b ? (b.title || "Libro senza titolo") : "—";
   if (b && b.title) document.title = `${b.title} — PubCraft`;
   chapterList.innerHTML = "";
-  if (!b) return;
-  b.chapters.forEach((c, i) => {
+  if (!b) {
+    updateBookStats();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+    renderCorkboard();
+  }
+    return;
+  }
+  (b.chapters || []).forEach((c, i) => {
     const li = document.createElement("li");
     li.dataset.file = c.file;
     if (c.file === currentFile) li.classList.add("active");
     const num = document.createElement("span");
     num.className = "num";
     let icon = String(i + 1);
-    if (c.type === "dedication") icon = "📜";
+    if (c.type === "copyright") icon = "©️";
+    else if (c.type === "dedication") icon = "📜";
     else if (c.type === "epigraph") icon = "✒️";
+    else if (c.type === "prologue") icon = "🌅";
+    else if (c.type === "epilogue") icon = "🌌";
     else if (c.type === "about-author") icon = "👤";
     else if (c.type === "acknowledgments") icon = "🙏";
     else if (c.type === "preface") icon = "📑";
     num.textContent = icon;
-    const t = document.createElement("span");
-    t.className = "t";
-    t.textContent = c.title || c.file;
+
+    const chInfo = document.createElement("div");
+    chInfo.className = "ch-info";
+
+    const tEl = document.createElement("span");
+    tEl.className = "t";
+    const st = (c.status || "bozza").toLowerCase();
+    const dot = document.createElement("span");
+    dot.className = `chapter-status-dot status-dot-${st}`;
+    dot.title = `Stato: ${st === "finale" ? "Finale" : st === "revisione" ? "Revisione" : "Bozza"}`;
+    tEl.appendChild(dot);
+    const tText = document.createTextNode(c.title || c.file);
+    tEl.appendChild(tText);
+    chInfo.appendChild(tEl);
+
+    const meta = document.createElement("div");
+    meta.className = "ch-meta";
+
+    const wc = document.createElement("span");
+    wc.className = "ch-wc";
+    const wordsCount = typeof c.words === "number" ? c.words : 0;
+    wc.textContent = `${wordsCount.toLocaleString(currentLang)} ${t("words_short") || "parole"}`;
+    meta.appendChild(wc);
+
+    if (c.summary) {
+      const sum = document.createElement("span");
+      sum.className = "ch-sum";
+      sum.textContent = c.summary;
+      sum.title = c.summary;
+      meta.appendChild(sum);
+    }
+    chInfo.appendChild(meta);
+
     const x = document.createElement("button");
     x.className = "x"; x.textContent = "✕"; x.title = "Sposta in .cestina";
     x.addEventListener("click", (e) => { e.stopPropagation(); deleteChapter(c); });
-    li.append(num, t, x);
+    li.append(num, chInfo, x);
     li.addEventListener("click", () => openChapter(c.file));
     chapterList.appendChild(li);
   });
+  updateBookStats();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+    renderCorkboard();
+  }
+  if (currentFile && state && state.book && state.book.chapters) {
+    const activeCh = state.book.chapters.find((x) => x.file === currentFile);
+    if (activeCh) updateSynopsisButton(activeCh.summary);
+  }
 }
 
 function updateDocVisibility() {
@@ -3594,6 +4780,10 @@ function updateDocVisibility() {
   if ($("saveState")) $("saveState").classList.toggle("hidden", !has);
   if ($("topbarBookHeader")) $("topbarBookHeader").classList.toggle("hidden", !has);
   if ($("btnCloseBook")) $("btnCloseBook").classList.toggle("hidden", !has);
+  if ($("btnToggleSidebar")) $("btnToggleSidebar").classList.toggle("hidden", !has);
+  if ($("statusbar")) $("statusbar").classList.toggle("hidden", !has);
+  const isCollapsed = $("app") ? $("app").classList.contains("sidebar-collapsed") : false;
+  updateSidebarToggleBtn(isCollapsed);
 
   if (has && state.book && state.book.title && $("topbarBookTitle")) {
     $("topbarBookTitle").textContent = state.book.title;
@@ -3759,6 +4949,7 @@ async function openChapter(file, force = false) {
     const c = state.book.chapters.find((x) => x.file === file);
     currentTitle = c ? (c.title || file) : file;
     $("curName").textContent = currentTitle;
+    updateDocbarStatusPicker();
     [...chapterList.children].forEach((li) =>
       li.classList.toggle("active", li.dataset.file === file));
     setState(t("opened_time", { time: fmtTime() }));
@@ -3840,6 +5031,19 @@ function saveNow() {
       }
       if (currentFile === targetFile && ((state && state.vault) || "") === targetVault) {
         fileVersion = res.version;
+        if (res.words !== undefined && state && state.book && state.book.chapters) {
+          const ch = state.book.chapters.find((x) => x.file === targetFile);
+          if (ch) {
+            ch.words = res.words;
+            if (res.summary !== undefined) ch.summary = res.summary;
+            updateActiveChapterSidebarItem(ch);
+            updateSynopsisButton(ch.summary);
+            updateBookStats();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+    renderCorkboard();
+  }
+          }
+        }
         if (targetRev > lastSavedRevision) {
           lastSavedRevision = targetRev;
         }
@@ -3880,6 +5084,9 @@ ta.addEventListener("input", () => {
     keepTypewriterCaretCentered();
   }
 });
+["select", "keyup", "mouseup"].forEach((ev) => {
+  ta?.addEventListener(ev, updateSelectionWordCount);
+});
 /* -------------------------------------------------- strumenti di scrittura */
 
 function replaceRange(el, start, end, text, selectStart, selectEnd) {
@@ -3914,7 +5121,7 @@ function prefixCurrentLines(text, start, end, prefix) {
     if (allPrefixed) {
       return l.substring(prefix.length);
     }
-    const cleaned = l.replace(/^(#{2,4}\s+|>\s+|-\s+|\d+\.\s+)/, "");
+    const cleaned = l.replace(/^(#{1,4}\s+|>\s+|-\s+|\d+\.\s+)/, "");
     return prefix + cleaned;
   });
   return newLines.join("\n");
@@ -3929,7 +5136,7 @@ function prefixNumberLines(text, start, end) {
     if (allNumbered) {
       return l.replace(/^\d+\.\s+/, "");
     }
-    const cleaned = l.replace(/^(#{2,4}\s+|>\s+|-\s+|\d+\.\s+)/, "");
+    const cleaned = l.replace(/^(#{1,4}\s+|>\s+|-\s+|\d+\.\s+)/, "");
     return `${i + 1}. ${cleaned}`;
   });
   return newLines.join("\n");
@@ -3980,6 +5187,10 @@ function applyFormatting(action) {
       replaceRange(ta, start, end, replacement, newCursorStart, newCursorEnd);
       return;
 
+    case "h1":
+      replacement = prefixCurrentLines(val, start, end, "# ");
+      break;
+
     case "h2":
       replacement = prefixCurrentLines(val, start, end, "## ");
       break;
@@ -4021,7 +5232,7 @@ function applyFormatting(action) {
       break;
   }
 
-  if (action === "h2" || action === "h3" || action === "quote" || action === "ul" || action === "ol") {
+  if (action === "h1" || action === "h2" || action === "h3" || action === "quote" || action === "ul" || action === "ol") {
     const lineInfo = getLineBounds(val, start, end);
     replaceRange(ta, lineInfo.lineStart, lineInfo.lineEnd, replacement, lineInfo.lineStart, lineInfo.lineStart + replacement.length);
   } else {
@@ -4080,12 +5291,13 @@ async function uploadAndInsertImage(file) {
 }
 
 // Inizializzazione bottoni toolbar scrittura
-["tbBold", "tbItalic", "tbH2", "tbH3", "tbQuote", "tbUl", "tbOl", "tbBreak", "tbLink", "tbImage", "tbTable"].forEach(id => {
+["tbBold", "tbItalic", "tbH1", "tbH2", "tbH3", "tbQuote", "tbUl", "tbOl", "tbBreak", "tbLink", "tbImage", "tbTable"].forEach(id => {
   $(id)?.addEventListener("mousedown", (e) => e.preventDefault());
 });
 
 $("tbBold")?.addEventListener("click", () => applyFormatting("bold"));
 $("tbItalic")?.addEventListener("click", () => applyFormatting("italic"));
+$("tbH1")?.addEventListener("click", () => applyFormatting("h1"));
 $("tbH2")?.addEventListener("click", () => applyFormatting("h2"));
 $("tbH3")?.addEventListener("click", () => applyFormatting("h3"));
 $("tbQuote")?.addEventListener("click", () => applyFormatting("quote"));
@@ -4210,8 +5422,13 @@ ta.addEventListener("keydown", (e) => {
     e.preventDefault();
     applyFormatting("italic");
   } else if (e.key === "k" || e.key === "K") {
+    if (e.shiftKey) {
+      e.preventDefault();
+      applyFormatting("link");
+      return;
+    }
     e.preventDefault();
-    applyFormatting("link");
+    toggleCommandPalette();
   }
 });
 
@@ -4275,12 +5492,15 @@ const PREVIEW_BASE = `
   .preview .chtitle::after {
     content: "\\2766"; display: block; color: #8a6d3b; font-size: .8em; margin-top: .4em;
   }
+  .preview h1 {
+    font-size: 1.35em; margin: 1.8em 0 .5em; text-align: left; font-weight: bold;
+  }
   .preview h2 {
     font-size: 1.15em; margin: 1.8em 0 .5em; text-align: left; font-weight: bold;
   }
   .preview h3 { margin: 1.8em 0 .5em; font-size: 1.1em; }
   .preview p { text-align: justify; hyphens: auto; margin: .85em 0; text-indent: 1.5em; }
-  .preview p.noindent, .preview .chtitle + p, .preview h2 + p, .preview h3 + p, .preview .first-para, .preview hr + p, .preview hr.sb + p { text-indent: 0; }
+  .preview p.noindent, .preview .chtitle + p, .preview h1 + p, .preview h2 + p, .preview h3 + p, .preview .first-para, .preview hr + p, .preview hr.sb + p { text-indent: 0; }
   .preview .dropcap { font-size: inherit; }
   .preview .first-phrase {
     font-variant: small-caps;
@@ -4319,7 +5539,7 @@ let debPrev = null;
 function renderPreview() {
   clearTimeout(debPrev);
   debPrev = setTimeout(() => {
-    let inner = marked.parse(formatMarkdownForBook(ta.value.replace(/^---\n[\s\S]*?\n---\n/, "")));
+    let inner = marked.parse(formatMarkdownForBook(ta.value.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")));
     const curCh = (state.book && state.book.chapters) ? state.book.chapters.find((x) => x.file === currentFile) : null;
     const chType = (curCh && curCh.type) || "chapter";
     const isFront = (chType === "dedication" || chType === "epigraph");
@@ -4347,7 +5567,14 @@ function renderPreview() {
     else if (chType === "epigraph") artClass += " preview-epigraph";
     else if (chType === "about-author") artClass += " preview-about-author";
 
-    const title = (currentTitle && !isFront) ? '<h1 class="chtitle">' + esc(currentTitle) + '</h1>' : "";
+    let title = "";
+    // Se il corpo del markdown inizia già con un titolo H1, usiamo quello come intestazione del capitolo
+    const firstH1Match = inner.match(/^\s*<h1(?:\s+[^>]*)?>([\s\S]*?)<\/h1>/i);
+    if (firstH1Match && !isFront) {
+      inner = inner.replace(/^\s*<h1(?:\s+[^>]*)?>([\s\S]*?)<\/h1>/i, '<h1 class="chtitle">$1</h1>');
+    } else if (currentTitle && !isFront) {
+      title = '<h1 class="chtitle">' + esc(currentTitle) + '</h1>';
+    }
     const darkPreviewStyle = isDarkMode ? `
       html, body {
         background: #141414 !important;
@@ -4852,7 +6079,7 @@ async function createNewProject() {
 
 async function importDocx() {
   if (isProjectSwitching || isBuilding) return;
-  const sel = await pickPath("files", ".docx,.vellum,.md,.markdown,.odt,.pdf", t("pick_docx_title"));
+  const sel = await pickPath("files", ".docx,.scriv,.scrivx,.scrivtemplate,.vellum,.md,.markdown,.odt,.pdf", t("pick_docx_title"));
   if (!sel) return;
   const targetDir = typeof sel === "object" ? sel.dir : sel;
   const targetFiles = (typeof sel === "object" && sel.files && sel.files.length) ? sel.files : null;
@@ -4932,7 +6159,7 @@ async function openVaultFolder() {
 
 async function importArchive() {
   if (isProjectSwitching || isBuilding) return;
-  const sel = await pickPath("files", ".docx,.vellum,.md,.markdown,.odt,.pdf", t("pick_docx_title"));
+  const sel = await pickPath("files", ".docx,.scriv,.scrivx,.scrivtemplate,.vellum,.md,.markdown,.odt,.pdf", t("pick_docx_title"));
   if (!sel) return;
   const targetDir = typeof sel === "object" ? sel.dir : sel;
   const targetFiles = (typeof sel === "object" && sel.files && sel.files.length) ? sel.files : null;
@@ -4964,6 +6191,8 @@ function newChapter() {
   if (isProjectSwitching || isBuilding || !state.book) return;
   $("newChapterType").value = "chapter";
   $("newChapterTitle").value = "";
+  if ($("newChapterSummary")) $("newChapterSummary").value = "";
+  if ($("newChapterPosition")) $("newChapterPosition").value = "after-current";
   $("newChapterModal").classList.remove("hidden");
   $("newChapterTitle").focus();
 }
@@ -5290,35 +6519,54 @@ async function printModalGo() {
   runBuild("print", { trim, pages, bleed, outdir: printConfigOutDir });
 }
 
-/* ------------------------------------------------------------ menu stili */
+/* ------------------------------------------------------------ menu stili & tipografia */
 
 let styleNames = {};
 
 function styleLabel() {
   const cur = state.book ? (state.book.style || "classico") : "classico";
-  $("btnStyle").textContent = t("btn_style") + (styleNames[cur] || cur) + " ▾";
+  const name = styleNames[cur] || cur;
+  if ($("btnStyle")) $("btnStyle").textContent = t("btn_style") + name + " ▾";
+  if ($("typographyLabel")) {
+    $("typographyLabel").textContent = (t("typography_label") || "Tipografia") + ": " + name;
+  }
 }
 
 async function initStyleMenu() {
   const list = $("styleList");
-  list.innerHTML = "";
+  const typoList = $("typographyStyleItems");
+  if (list) list.innerHTML = "";
+  if (typoList) typoList.innerHTML = "";
   try {
     const { styles } = await api("/api/styles");
     styleNames = {};
     styles.forEach((s) => { styleNames[s.id] = s.name; });
     const cur = state.book ? (state.book.style || "classico") : "classico";
     styles.forEach((s) => {
-      const b = document.createElement("button");
-      b.className = "item";
-      b.innerHTML = esc(s.name) + (s.id === cur ? ' <span class="check">✓</span>' : "");
-      b.addEventListener("click", () => { hideStyleMenu(); selectStyle(s.id); });
-      list.appendChild(b);
+      if (list) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "item";
+        b.innerHTML = esc(s.name) + (s.id === cur ? ' <span class="check">✓</span>' : "");
+        b.addEventListener("click", () => { hideStyleMenu(); hideTypographyMenu(); selectStyle(s.id); });
+        list.appendChild(b);
+      }
+      if (typoList) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "item" + (s.id === cur ? " active" : "");
+        b.innerHTML = `<span>${esc(s.name)}</span>` + (s.id === cur ? ' <span class="check">✓</span>' : "");
+        b.addEventListener("click", () => { hideTypographyMenu(); hideStyleMenu(); selectStyle(s.id); });
+        typoList.appendChild(b);
+      }
     });
   } catch { /* niente */ }
   styleLabel();
 }
 
-const hideStyleMenu = () => $("styleList").classList.add("hidden");
+const hideStyleMenu = () => $("styleList")?.classList.add("hidden");
+const hideTypographyMenu = () => $("typographyList")?.classList.add("hidden");
+const hideExportMenu = () => $("exportList")?.classList.add("hidden");
 
 async function selectStyle(id) {
   try {
@@ -5347,19 +6595,32 @@ function getOpeningOptions() {
 function openingLabel() {
   const cur = (state.book && state.book.opening) ? state.book.opening : "dropcap";
   const item = getOpeningOptions().find((o) => o.id === cur);
-  $("btnOpening").textContent = t("btn_opening") + (item ? item.name : t("opening_dropcap")) + " ▾";
+  if ($("btnOpening")) $("btnOpening").textContent = t("btn_opening") + (item ? item.name : t("opening_dropcap")) + " ▾";
 }
 
 function initOpeningMenu() {
   const list = $("openingList");
-  list.innerHTML = "";
+  const typoList = $("typographyOpeningItems");
+  if (list) list.innerHTML = "";
+  if (typoList) typoList.innerHTML = "";
   const cur = (state.book && state.book.opening) ? state.book.opening : "dropcap";
   getOpeningOptions().forEach((o) => {
-    const b = document.createElement("button");
-    b.className = "item";
-    b.innerHTML = esc(o.name) + (o.id === cur ? ' <span class="check">✓</span>' : "");
-    b.addEventListener("click", () => { hideOpeningMenu(); selectOpening(o.id); });
-    list.appendChild(b);
+    if (list) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "item";
+      b.innerHTML = esc(o.name) + (o.id === cur ? ' <span class="check">✓</span>' : "");
+      b.addEventListener("click", () => { hideOpeningMenu(); hideTypographyMenu(); selectOpening(o.id); });
+      list.appendChild(b);
+    }
+    if (typoList) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "item" + (o.id === cur ? " active" : "");
+      b.innerHTML = `<span>${esc(o.name)}</span>` + (o.id === cur ? ' <span class="check">✓</span>' : "");
+      b.addEventListener("click", () => { hideTypographyMenu(); hideOpeningMenu(); selectOpening(o.id); });
+      typoList.appendChild(b);
+    }
   });
   openingLabel();
 }
@@ -5389,7 +6650,7 @@ let openThumb = null;
 async function loadCovers() {
   try {
     const res = await api("/api/covers");
-    covers = res.covers;
+    covers = (res && res.covers) || [];
   } catch { covers = []; }
   renderCovers();
 }
@@ -5556,14 +6817,329 @@ function setCoverOpen(open) {
 }
 
 /* ------------------------------------------------------------- viste doc */
+let currentViewMode = "edit";
 
 function setView(mode) {
+  currentViewMode = mode;
   const panes = $("panes");
-  panes.classList.toggle("edit", mode === "edit");
-  panes.classList.toggle("split", mode === "split");
-  panes.classList.toggle("prevOnly", mode === "prev");
-  [["vwEdit", "edit"], ["vwSplit", "split"], ["vwPrev", "prev"]].forEach(([id, m]) =>
-    $(id).classList.toggle("on", m === mode));
+  const corkboard = $("corkboardPane");
+
+  if (corkboard) {
+    corkboard.classList.toggle("hidden", mode !== "cards");
+  }
+  if (panes) {
+    panes.classList.toggle("hidden", mode === "cards");
+    panes.classList.toggle("edit", mode === "edit");
+    panes.classList.toggle("split", mode === "split");
+    panes.classList.toggle("prevOnly", mode === "prev");
+  }
+  [["vwEdit", "edit"], ["vwCards", "cards"], ["vwSplit", "split"], ["vwPrev", "prev"]].forEach(([id, m]) => {
+    const el = $(id);
+    if (el) {
+      const active = (m === mode);
+      el.classList.toggle("on", active);
+      el.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  });
+
+  if (mode === "cards") {
+    if ($("curName")) $("curName").textContent = t("corkboard_title") || "Lavagna a Schede";
+    if ($("chapterStatusBarItem")) $("chapterStatusBarItem").classList.add("hidden");
+    if ($("btnEditSynopsis")) $("btnEditSynopsis").classList.add("hidden");
+    if ($("wordCount")) $("wordCount").classList.add("hidden");
+    renderCorkboard();
+  } else {
+    if (currentFile && state?.book?.chapters) {
+      const activeCh = state.book.chapters.find((x) => x.file === currentFile);
+      if (activeCh && $("curName")) $("curName").textContent = activeCh.title || activeCh.file;
+    }
+    if ($("chapterStatusBarItem")) $("chapterStatusBarItem").classList.remove("hidden");
+    if ($("btnEditSynopsis")) $("btnEditSynopsis").classList.remove("hidden");
+    if ($("wordCount")) $("wordCount").classList.remove("hidden");
+    updateDocbarStatusPicker();
+  }
+}
+
+let corkboardFilter = "all";
+let corkboardSearchQuery = "";
+
+function renderCorkboard() {
+  const grid = $("corkboardGrid");
+  if (!grid) return;
+  const b = state.book;
+  if (!b || !b.chapters || b.chapters.length === 0) {
+    grid.innerHTML = `<div class="cb-empty-state" style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: var(--muted);">
+      <div style="font-size: 42px; margin-bottom: 12px;">📋</div>
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">Nessun capitolo trovato</div>
+      <div style="font-size: 13px;">Crea o importa capitoli per visualizzare la lavagna a schede.</div>
+    </div>`;
+    if ($("corkboardSummaryBadge")) $("corkboardSummaryBadge").textContent = "0 capitoli • 0 parole";
+    return;
+  }
+
+  const chapters = b.chapters;
+  const totalWords = chapters.reduce((acc, c) => acc + (c.words || 0), 0);
+  if ($("corkboardSummaryBadge")) {
+    $("corkboardSummaryBadge").textContent = `${chapters.length} capitoli • ${totalWords.toLocaleString(currentLang)} parole`;
+  }
+
+  const query = corkboardSearchQuery.trim().toLowerCase();
+  const filtered = chapters.map((c, originalIndex) => ({ c, originalIndex })).filter(({ c }) => {
+    const st = (c.status || "bozza").toLowerCase();
+    if (corkboardFilter !== "all" && st !== corkboardFilter) return false;
+    if (query) {
+      const matchTitle = (c.title || "").toLowerCase().includes(query);
+      const matchSum = (c.summary || "").toLowerCase().includes(query);
+      if (!matchTitle && !matchSum) return false;
+    }
+    return true;
+  });
+
+  grid.innerHTML = "";
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--muted); font-size: 14px;">
+      Nessuna scheda corrisponde ai filtri selezionati.
+    </div>`;
+    return;
+  }
+
+  filtered.forEach(({ c, originalIndex }) => {
+    const card = document.createElement("div");
+    const st = (c.status || "bozza").toLowerCase();
+    card.className = `cb-card status-${st}`;
+    card.dataset.file = c.file;
+    card.dataset.index = String(originalIndex);
+    card.draggable = true;
+
+    // Colore barra stato superiore
+    const statusBar = document.createElement("div");
+    statusBar.className = "cb-card-status-bar";
+    card.appendChild(statusBar);
+
+    // Header scheda
+    const header = document.createElement("div");
+    header.className = "cb-card-header";
+
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "cb-card-title-group";
+
+    const numSpan = document.createElement("span");
+    numSpan.className = "cb-card-num";
+    let icon = String(originalIndex + 1);
+    if (c.type === "prologue") icon = "🌅";
+    else if (c.type === "epilogue") icon = "🌌";
+    else if (c.type === "dedication") icon = "📜";
+    else if (c.type === "copyright") icon = "©️";
+    numSpan.textContent = icon;
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "cb-card-title";
+    titleEl.textContent = c.title || c.file;
+    titleEl.title = c.title || c.file;
+
+    titleGroup.append(numSpan, titleEl);
+
+    // Status select interattivo a tendina
+    const statusSelect = document.createElement("select");
+    statusSelect.className = `cb-card-status-select status-${st}`;
+    statusSelect.title = "Stato capitolo: Bozza / Revisione / Finale";
+    statusSelect.innerHTML = `
+      <option value="bozza" ${st === "bozza" ? "selected" : ""}>🟡 Bozza</option>
+      <option value="revisione" ${st === "revisione" ? "selected" : ""}>🔵 Revisione</option>
+      <option value="finale" ${st === "finale" ? "selected" : ""}>🟢 Finale</option>
+    `;
+    statusSelect.addEventListener("click", (e) => e.stopPropagation());
+    statusSelect.addEventListener("change", async (e) => {
+      e.stopPropagation();
+      await setChapterStatus(c.file, statusSelect.value);
+    });
+
+    header.append(titleGroup, statusSelect);
+    card.appendChild(header);
+
+    // Body scheda (Sinossi)
+    const body = document.createElement("div");
+    body.className = "cb-card-body";
+
+    const synEl = document.createElement("div");
+    synEl.className = `cb-card-synopsis ${!c.summary ? "empty" : ""}`;
+    synEl.textContent = c.summary || "Nessuna sinossi. Clicca per aggiungere un promemoria per questo capitolo…";
+    synEl.title = "Clicca per modificare la sinossi";
+    synEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openSynopsisModal(c.file);
+    });
+
+    body.appendChild(synEl);
+    card.appendChild(body);
+
+    // Footer scheda
+    const footer = document.createElement("div");
+    footer.className = "cb-card-footer";
+
+    const wcSpan = document.createElement("span");
+    wcSpan.className = "cb-card-wc";
+    const words = typeof c.words === "number" ? c.words : 0;
+    wcSpan.textContent = `📝 ${words.toLocaleString(currentLang)} parole`;
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "cb-card-open-btn";
+    openBtn.textContent = "Apri ↗";
+    openBtn.title = "Apri capitolo nell'editor";
+    openBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openChapter(c.file);
+      setView("edit");
+    });
+
+    footer.append(wcSpan, openBtn);
+    card.appendChild(footer);
+
+    // Clic su tutta la scheda: apri nell'editor
+    card.addEventListener("click", () => {
+      openChapter(c.file);
+      setView("edit");
+    });
+
+    // Drag and drop per riordinare
+    card.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", c.file);
+      e.dataTransfer.effectAllowed = "move";
+      card.classList.add("dragging");
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+      document.querySelectorAll(".cb-card").forEach((el) => el.classList.remove("drag-over"));
+    });
+    card.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      card.classList.add("drag-over");
+    });
+    card.addEventListener("dragleave", () => {
+      card.classList.remove("drag-over");
+    });
+    card.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      card.classList.remove("drag-over");
+      const srcFile = e.dataTransfer.getData("text/plain");
+      if (srcFile && srcFile !== c.file) {
+        await reorderChaptersByFiles(srcFile, c.file);
+      }
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+function updateDocbarStatusPicker() {
+  const select = $("chapterStatusSelect");
+  if (!select) return;
+  if (!currentFile || !state?.book?.chapters) {
+    select.value = "bozza";
+    select.className = "chapter-status-select status-bozza";
+    return;
+  }
+  const ch = state.book.chapters.find((x) => x.file === currentFile);
+  const st = (ch?.status || "bozza").toLowerCase();
+  const validSt = (st === "finale" || st === "revisione") ? st : "bozza";
+  select.value = validSt;
+  select.className = `chapter-status-select status-${validSt}`;
+}
+
+async function setChapterStatus(file, newStatus) {
+  if (!file || !state?.book?.chapters) return;
+  const ch = state.book.chapters.find((x) => x.file === file);
+  if (!ch) return;
+
+  const st = (newStatus || "bozza").toLowerCase();
+  ch.status = st;
+
+  // Se è il capitolo attualmente aperto nell'editor:
+  if (file === currentFile && typeof ta !== "undefined" && ta) {
+    let val = ta.value;
+    const fmMatch = val.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n[\s\S]*)$/);
+    if (fmMatch) {
+      let fm = fmMatch[1];
+      const body = fmMatch[2];
+      if (/^(?:status|stato):/mi.test(fm)) {
+        fm = fm.replace(/^(?:status|stato):.*$/mi, `status: ${st}`);
+      } else {
+        fm = `${fm.trim()}\nstatus: ${st}`;
+      }
+      val = `---\n${fm.trim()}\n---${body}`;
+    } else {
+      val = `---\nstatus: ${st}\n---\n\n${val}`;
+    }
+    ta.value = val;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    saveNow();
+  } else {
+    // Se è un capitolo diverso non caricato nell'editor:
+    try {
+      const res = await api("/api/chapter?file=" + encodeURIComponent(file));
+      if (res && res.content !== undefined) {
+        let content = res.content;
+        const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n[\s\S]*)$/);
+        if (fmMatch) {
+          let fm = fmMatch[1];
+          const body = fmMatch[2];
+          if (/^(?:status|stato):/mi.test(fm)) {
+            fm = fm.replace(/^(?:status|stato):.*$/mi, `status: ${st}`);
+          } else {
+            fm = `${fm.trim()}\nstatus: ${st}`;
+          }
+          content = `---\n${fm.trim()}\n---${body}`;
+        } else {
+          content = `---\nstatus: ${st}\n---\n\n${content}`;
+        }
+        await api("/api/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file: file,
+            content: content,
+            base_version: res.version,
+            vault: (state && state.vault) || "",
+          }),
+        });
+      }
+    } catch (err) {
+      console.error("Errore salvataggio stato capitolo:", err);
+    }
+  }
+
+  updateDocbarStatusPicker();
+  renderBook();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") renderCorkboard();
+}
+
+async function reorderChaptersByFiles(srcFile, targetFile) {
+  if (!state?.book?.chapters) return;
+  const chapters = [...state.book.chapters];
+  const srcIdx = chapters.findIndex((x) => x.file === srcFile);
+  const targetIdx = chapters.findIndex((x) => x.file === targetFile);
+  if (srcIdx === -1 || targetIdx === -1) return;
+
+  const [moved] = chapters.splice(srcIdx, 1);
+  chapters.splice(targetIdx, 0, moved);
+  state.book.chapters = chapters;
+
+  try {
+    const res = await api("/api/reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files: chapters.map((x) => x.file) }),
+    });
+    if (res && res.book) {
+      state.book = res.book;
+    }
+  } catch (err) {
+    console.error("Errore riordino capitoli:", err);
+  }
+  renderBook();
+  renderCorkboard();
 }
 
 /* ----------------------------------------------------------------- theme */
@@ -5957,27 +7533,34 @@ function keepTypewriterCaretCentered() {
 
 let isCommittingTitle = false;
 
-function initTopbarTitleEditing() {
+function startEditingBookTitle() {
   const titleSpan = $("topbarBookTitle");
+  const titleBtn = $("topbarBookTitleBtn");
   const titleInput = $("topbarBookTitleInput");
-  const sidebarTitle = $("bookTitle");
-  if (!titleSpan || !titleInput) return;
-
-  function startEditing() {
-    if (!state.vault || !state.book || isProjectSwitching || isBuilding) return;
+  if (!state.vault || !state.book || isProjectSwitching || isBuilding) return;
+  hideBookMenu();
+  if (titleInput) {
     titleInput.value = state.book.title || "";
-    titleSpan.classList.add("hidden");
+    if (titleBtn) titleBtn.classList.add("hidden");
     titleInput.classList.remove("hidden");
     titleInput.focus();
     titleInput.select();
   }
+}
+
+function initTopbarTitleEditing() {
+  const titleSpan = $("topbarBookTitle");
+  const titleBtn = $("topbarBookTitleBtn");
+  const titleInput = $("topbarBookTitleInput");
+  const sidebarTitle = $("bookTitle");
+  if (!titleSpan || !titleInput) return;
 
   async function commitRename() {
     if (isCommittingTitle || titleInput.classList.contains("hidden")) return;
     isCommittingTitle = true;
     const newTitle = titleInput.value.trim();
     titleInput.classList.add("hidden");
-    titleSpan.classList.remove("hidden");
+    if (titleBtn) titleBtn.classList.remove("hidden");
 
     if (!newTitle || !state.book || newTitle === state.book.title) {
       if (state.book && state.book.title) {
@@ -6011,18 +7594,22 @@ function initTopbarTitleEditing() {
   function cancelRename() {
     isCommittingTitle = true;
     titleInput.classList.add("hidden");
-    titleSpan.classList.remove("hidden");
+    if (titleBtn) titleBtn.classList.remove("hidden");
     if (state.book && state.book.title) {
       titleSpan.textContent = state.book.title;
     }
     setTimeout(() => { isCommittingTitle = false; }, 50);
   }
 
-  titleSpan.addEventListener("click", startEditing);
+  titleSpan.addEventListener("click", (e) => {
+    e.stopPropagation();
+    startEditingBookTitle();
+  });
+
   if (sidebarTitle) {
     sidebarTitle.style.cursor = "pointer";
     sidebarTitle.title = t("topbar_title_tooltip");
-    sidebarTitle.addEventListener("click", startEditing);
+    sidebarTitle.addEventListener("click", startEditingBookTitle);
   }
 
   titleInput.addEventListener("keydown", (e) => {
@@ -6040,6 +7627,198 @@ function initTopbarTitleEditing() {
   });
 }
 
+const hideBookMenu = () => $("bookMenuList")?.classList.add("hidden");
+
+function initBookMenu() {
+  const btn = $("topbarBookTitleBtn");
+  const menu = $("bookMenuList");
+  if (!btn || !menu) return;
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideSettingsMenu();
+    hideTypographyMenu();
+    hideExportMenu();
+    menu.classList.toggle("hidden");
+  });
+
+  $("btnBookMenuRename")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideBookMenu();
+    startEditingBookTitle();
+  });
+
+  $("btnBookMenuClose")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideBookMenu();
+    closeCurrentBook();
+  });
+
+  $("appBrand")?.addEventListener("click", () => {
+    if (state.vault && state.book) {
+      closeCurrentBook();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if ($("bookMenu") && !$("bookMenu").contains(e.target)) {
+      hideBookMenu();
+    }
+  });
+}
+
+let isCommittingChapterTitle = false;
+
+function initChapterTitleEditing() {
+  const titleSpan = $("curName");
+  const titleInput = $("curNameInput");
+  if (!titleSpan || !titleInput) return;
+
+  function startChapterEditing() {
+    if (!currentFile || !state.book || isProjectSwitching || isBuilding || currentViewMode === "cards") return;
+    titleInput.value = currentTitle || "";
+    titleSpan.classList.add("hidden");
+    titleInput.classList.remove("hidden");
+    titleInput.focus();
+    titleInput.select();
+  }
+
+  async function commitChapterRename() {
+    if (isCommittingChapterTitle || titleInput.classList.contains("hidden")) return;
+    isCommittingChapterTitle = true;
+    const newTitle = titleInput.value.trim();
+    titleInput.classList.add("hidden");
+    titleSpan.classList.remove("hidden");
+
+    if (!newTitle || !currentFile || newTitle === currentTitle) {
+      titleSpan.textContent = currentTitle;
+      isCommittingChapterTitle = false;
+      return;
+    }
+
+    try {
+      if (typeof flushSave === "function") {
+        await flushSave();
+      }
+      const res = await api("/api/setchaptertitle", {
+        method: "POST",
+        body: JSON.stringify({ file: currentFile, title: newTitle }),
+      });
+      if (res && res.book) {
+        state.book = res.book;
+        currentTitle = newTitle;
+        titleSpan.textContent = newTitle;
+        if (res.file === currentFile && res.version) {
+          fileVersion = res.version;
+        }
+        if (res.file === currentFile && typeof res.content === "string") {
+          if (ta) ta.value = res.content;
+          renderPreview();
+        } else {
+          setChapterTitleInEditor(newTitle);
+        }
+        renderBook();
+        if (currentViewMode === "cards") renderCorkboard();
+      }
+    } catch (err) {
+      showModal(t("modal_error"), String(err), [[t("modal_close"), hideModal]]);
+      titleSpan.textContent = currentTitle;
+    } finally {
+      isCommittingChapterTitle = false;
+    }
+  }
+
+  function cancelChapterRename() {
+    isCommittingChapterTitle = true;
+    titleInput.classList.add("hidden");
+    titleSpan.classList.remove("hidden");
+    titleSpan.textContent = currentTitle;
+    setTimeout(() => { isCommittingChapterTitle = false; }, 50);
+  }
+
+  titleSpan.addEventListener("click", startChapterEditing);
+  titleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitChapterRename();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelChapterRename();
+    }
+  });
+  titleInput.addEventListener("blur", () => {
+    commitChapterRename();
+  });
+}
+
+const hideSettingsMenu = () => $("settingsList")?.classList.add("hidden");
+
+function initSettingsMenu() {
+  const btn = $("btnSettings");
+  const list = $("settingsList");
+  const grid = $("settingsLangGrid");
+  if (!btn || !list) return;
+
+  const langs = [
+    { code: "it", flag: "🇮🇹", name: "Italiano" },
+    { code: "en", flag: "🇬🇧", name: "English" },
+    { code: "es", flag: "🇪🇸", name: "Español" },
+    { code: "fr", flag: "🇫🇷", name: "Français" },
+    { code: "de", flag: "🇩🇪", name: "Deutsch" },
+    { code: "pt", flag: "🇵🇹", name: "Português" },
+    { code: "zh", flag: "🇨🇳", name: "中文" },
+    { code: "ja", flag: "🇯🇵", name: "日本語" },
+    { code: "ru", flag: "🇷🇺", name: "Русский" },
+    { code: "ar", flag: "🇸🇦", name: "العربية" },
+  ];
+
+  function renderLangGrid() {
+    if (!grid) return;
+    grid.innerHTML = "";
+    langs.forEach((l) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "settings-lang-btn" + (currentLang === l.code ? " active" : "");
+      b.innerHTML = `<span>${l.flag}</span> <span>${l.name}</span>`;
+      b.addEventListener("click", () => {
+        setLanguage(l.code);
+        renderLangGrid();
+        hideSettingsMenu();
+      });
+      grid.appendChild(b);
+    });
+  }
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideBookMenu();
+    hideTypographyMenu();
+    hideExportMenu();
+    if (list.classList.contains("hidden")) {
+      renderLangGrid();
+      list.classList.remove("hidden");
+    } else {
+      hideSettingsMenu();
+    }
+  });
+
+  $("btnSettingsShortcuts")?.addEventListener("click", () => {
+    hideSettingsMenu();
+    showTutorialModal("shortcuts");
+  });
+
+  $("btnSettingsReport")?.addEventListener("click", () => {
+    hideSettingsMenu();
+    openReportIssueModal();
+  });
+
+  document.addEventListener("click", (e) => {
+    if ($("settingsMenu") && !$("settingsMenu").contains(e.target)) {
+      hideSettingsMenu();
+    }
+  });
+}
+
 /* ----------------------------------------------------------------- notebook */
 
 let notesData = [];
@@ -6052,6 +7831,7 @@ let lastSavedNoteRevision = 0;
 let noteDirty = false;
 let noteSaveTimer = null;
 let noteSavePromise = null;
+let noteSaveQueue = Promise.resolve();
 let isSavingNote = false;
 let isLoadingNote = false;
 
@@ -6333,6 +8113,10 @@ function handleNoteConflict(title, content) {
 }
 
 async function saveNoteAsCopy(title, content) {
+  clearTimeout(noteSaveTimer);
+  noteSaveTimer = null;
+  const copyRev = noteRevision;
+  setNoteStatus(t("save_saving"));
   try {
     const copyTitle = title + " (Copia)";
     const res = await api("/api/note", {
@@ -6347,13 +8131,24 @@ async function saveNoteAsCopy(title, content) {
       currentNoteFile = res.file;
       currentNoteVault = (state && state.vault) || "";
       currentNoteVersion = res.version || "";
-      noteDirty = false;
-      noteRevision++;
-      lastSavedNoteRevision = noteRevision;
-      await notifyClientDirty();
-      await loadNotes();
-      setNoteStatus(t("save_saved"));
       if ($("noteTitleInput")) $("noteTitleInput").value = copyTitle;
+
+      if (noteRevision <= copyRev) {
+        lastSavedNoteRevision = copyRev;
+        noteDirty = false;
+        await notifyClientDirty();
+        setNoteStatus(t("save_saved"));
+        setTimeout(() => {
+          if (!noteSaveTimer && !isSavingNote && !noteDirty) setNoteStatus("");
+        }, 1500);
+      } else {
+        lastSavedNoteRevision = copyRev;
+        noteDirty = true;
+        await notifyClientDirty();
+        setNoteStatus(t("note_unsaved"));
+        queueSaveCurrentNote();
+      }
+      await loadNotes();
     }
   } catch (err) {
     showModal(t("modal_error"), String(err), [[t("modal_close"), hideModal]]);
@@ -6363,23 +8158,32 @@ async function saveNoteAsCopy(title, content) {
 async function saveCurrentNote(opts = {}) {
   clearTimeout(noteSaveTimer);
   noteSaveTimer = null;
-  if (isLoadingNote) return false;
+  if (isLoadingNote) return Promise.resolve(false);
   if (!currentNoteFile && !$("noteTitleInput")?.value?.trim() && !$("noteContentInput")?.value?.trim()) {
     noteDirty = false;
     notifyClientDirty();
-    return true;
+    return Promise.resolve(true);
   }
-  if (noteSavePromise) return noteSavePromise;
-
-  const targetFile = currentNoteFile;
-  const targetVault = (state && state.vault) || "";
-  const targetRev = noteRevision;
-  const targetBaseVersion = currentNoteVersion;
   const force = Boolean(opts && opts.force);
-  const title = $("noteTitleInput")?.value?.trim() || t("note_untitled");
-  const content = $("noteContentInput")?.value || "";
+  if (!force && !noteDirty && noteRevision <= lastSavedNoteRevision) {
+    return Promise.resolve(true);
+  }
 
-  noteSavePromise = (async () => {
+  const task = noteSaveQueue.then(async () => {
+    if (isLoadingNote) return false;
+    if (!force && !noteDirty && noteRevision <= lastSavedNoteRevision) {
+      return true;
+    }
+    clearTimeout(noteSaveTimer);
+    noteSaveTimer = null;
+
+    const targetFile = currentNoteFile;
+    const targetVault = (state && state.vault) || "";
+    const targetRev = noteRevision;
+    const targetBaseVersion = currentNoteVersion;
+    const title = $("noteTitleInput")?.value?.trim() || t("note_untitled");
+    const content = $("noteContentInput")?.value || "";
+
     setNoteStatus(t("save_saving"));
     isSavingNote = true;
     try {
@@ -6404,27 +8208,33 @@ async function saveCurrentNote(opts = {}) {
           if (targetRev > lastSavedNoteRevision) {
             lastSavedNoteRevision = targetRev;
           }
-          if (noteRevision <= lastSavedNoteRevision) {
-            noteDirty = false;
-            await notifyClientDirty();
-          }
           const idx = notesData.findIndex(n => n.file === currentNoteFile);
           if (idx >= 0) {
             notesData[idx].title = res.title;
-            notesData[idx].preview = content.replace(/\n/g, " ").slice(0, 80);
+            notesData[idx].preview = truncPoints(content.replace(/\n/g, " "), 80);
           }
           renderNotesList();
           renderNoteTabs();
-          setNoteStatus(t("save_saved"));
-          setTimeout(() => {
-            if (!noteSaveTimer && !isSavingNote && !noteDirty) setNoteStatus("");
-          }, 1500);
+
+          if (noteRevision <= lastSavedNoteRevision) {
+            noteDirty = false;
+            await notifyClientDirty();
+            setNoteStatus(t("save_saved"));
+            setTimeout(() => {
+              if (!noteSaveTimer && !isSavingNote && !noteDirty) setNoteStatus("");
+            }, 1500);
+          } else {
+            noteDirty = true;
+            await notifyClientDirty();
+            setNoteStatus(t("note_unsaved"));
+            queueSaveCurrentNote();
+          }
         }
         return true;
       }
       throw new Error(res.error || "Errore salvataggio nota");
     } catch (err) {
-      if (err && (err.status === 409 || String(err).includes("409") || String(err).includes("NOTE_CONFLICT"))) {
+      if (err && (err.status === 409 || err.code === "NOTE_CONFLICT" || String(err).includes("409") || String(err).includes("NOTE_CONFLICT") || String(err.message).includes("modificata da un'altra scheda"))) {
         setNoteStatus(t("conflict_detected") || "Conflitto rilevato", true);
         handleNoteConflict(title, content);
       } else {
@@ -6433,10 +8243,13 @@ async function saveCurrentNote(opts = {}) {
       return false;
     } finally {
       isSavingNote = false;
-      noteSavePromise = null;
+      if (noteSavePromise === task) noteSavePromise = null;
     }
-  })();
-  return noteSavePromise;
+  });
+
+  noteSaveQueue = task.catch(() => {});
+  noteSavePromise = task;
+  return task;
 }
 
 async function flushNoteSave() {
@@ -6623,7 +8436,16 @@ $("openModal").addEventListener("click", (e) => {
 $("btnNew").addEventListener("click", newChapter);
 
 function isDefaultSectionTitle(title) {
-  const keys = ["default_dedication", "default_epigraph", "default_about_author", "default_acknowledgments", "default_preface"];
+  const keys = [
+    "default_copyright",
+    "default_dedication",
+    "default_epigraph",
+    "default_prologue",
+    "default_epilogue",
+    "default_about_author",
+    "default_acknowledgments",
+    "default_preface",
+  ];
   return Object.values(I18N).some(dict => keys.some(key => dict[key] === title));
 }
 
@@ -6631,8 +8453,11 @@ $("newChapterType").addEventListener("change", (e) => {
   const type = e.target.value;
   const titleInput = $("newChapterTitle");
   const defaults = {
+    copyright: "default_copyright",
     dedication: "default_dedication",
     epigraph: "default_epigraph",
+    prologue: "default_prologue",
+    epilogue: "default_epilogue",
     "about-author": "default_about_author",
     acknowledgments: "default_acknowledgments",
     preface: "default_preface",
@@ -6650,6 +8475,9 @@ $("btnNewChapterConfirm").addEventListener("click", async () => {
   if (isProjectSwitching || isBuilding) return;
   const title = $("newChapterTitle").value.trim();
   const type = $("newChapterType").value;
+  const position = $("newChapterPosition") ? $("newChapterPosition").value : "after-current";
+  const summary = $("newChapterSummary") ? $("newChapterSummary").value.trim() : "";
+  const after = currentFile || "";
   if (!title) {
     alert(t("enter_section_title"));
     return;
@@ -6657,7 +8485,8 @@ $("btnNewChapterConfirm").addEventListener("click", async () => {
   hideNewChapterModal();
   try {
     const res = await api("/api/newchapter", {
-      method: "POST", body: JSON.stringify({ title, type }),
+      method: "POST",
+      body: JSON.stringify({ title, type, position, after, summary }),
     });
     state.book = res.book;
     renderBook();
@@ -6666,6 +8495,32 @@ $("btnNewChapterConfirm").addEventListener("click", async () => {
     showModal("Errore", String(e), [["Chiudi", hideModal]]);
   }
 });
+
+if ($("btnEditSynopsis")) {
+  $("btnEditSynopsis").addEventListener("click", openSynopsisModal);
+}
+if ($("btnSynopsisCancel")) {
+  $("btnSynopsisCancel").addEventListener("click", hideSynopsisModal);
+}
+if ($("btnSynopsisSave")) {
+  $("btnSynopsisSave").addEventListener("click", saveSynopsisFromModal);
+}
+if ($("synopsisModal")) {
+  $("synopsisModal").addEventListener("click", (e) => {
+    if (e.target === $("synopsisModal")) hideSynopsisModal();
+  });
+}
+if ($("synopsisInput")) {
+  $("synopsisInput").addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      saveSynopsisFromModal();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      hideSynopsisModal();
+    }
+  });
+}
 
 if ($("btnWatch")) {
   $("btnWatch").addEventListener("click", () => {
@@ -6704,6 +8559,13 @@ document.addEventListener("keydown", (e) => {
     if (fsState) fsCancel();
     hideStyleMenu();
     hideOpeningMenu();
+    hideTypographyMenu();
+    hideExportMenu();
+    hideBookMenu();
+    hideSettingsMenu();
+    if ($("commandPaletteModal") && !$("commandPaletteModal").classList.contains("hidden")) {
+      closeCommandPalette();
+    }
     if (!$("openModal").classList.contains("hidden")) hideOpenModal();
   }
 });
@@ -6720,35 +8582,98 @@ function alignDropdownMenu(menuEl, containerEl) {
   }
 }
 
-$("btnStyle").addEventListener("click", async (e) => {
+$("btnTypography")?.addEventListener("click", async (e) => {
+  e.stopPropagation();
+  hideExportMenu();
+  const list = $("typographyList");
+  if (!list) return;
+  if (list.classList.contains("hidden")) {
+    await initStyleMenu();
+    initOpeningMenu();
+    alignDropdownMenu(list, $("typographyMenu"));
+    list.classList.remove("hidden");
+  } else {
+    hideTypographyMenu();
+  }
+});
+document.addEventListener("click", (e) => {
+  if ($("typographyMenu") && !$("typographyMenu").contains(e.target)) hideTypographyMenu();
+});
+
+$("btnExportMenu")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  hideTypographyMenu();
+  const list = $("exportList");
+  if (!list) return;
+  if (list.classList.contains("hidden")) {
+    alignDropdownMenu(list, $("exportMenu"));
+    list.classList.remove("hidden");
+  } else {
+    hideExportMenu();
+  }
+});
+document.addEventListener("click", (e) => {
+  if ($("exportMenu") && !$("exportMenu").contains(e.target)) hideExportMenu();
+});
+
+["btnPubPreview", "btnPrint", "btnKindle", "btnWatch"].forEach((id) => {
+  $(id)?.addEventListener("click", () => hideExportMenu());
+});
+
+$("btnStyle")?.addEventListener("click", async (e) => {
   e.stopPropagation();
   const list = $("styleList");
-  if (list.classList.contains("hidden")) {
+  if (list && list.classList.contains("hidden")) {
     await initStyleMenu();
     alignDropdownMenu(list, $("styleMenu"));
     list.classList.remove("hidden");
-  } else hideStyleMenu();
+  } else if (list) hideStyleMenu();
 });
 document.addEventListener("click", (e) => {
-  if (!$("styleMenu").contains(e.target)) hideStyleMenu();
+  if ($("styleMenu") && !$("styleMenu").contains(e.target)) hideStyleMenu();
 });
 
-$("btnOpening").addEventListener("click", (e) => {
+$("btnOpening")?.addEventListener("click", (e) => {
   e.stopPropagation();
   const list = $("openingList");
-  if (list.classList.contains("hidden")) {
+  if (list && list.classList.contains("hidden")) {
     initOpeningMenu();
     alignDropdownMenu(list, $("openingMenu"));
     list.classList.remove("hidden");
-  } else hideOpeningMenu();
+  } else if (list) hideOpeningMenu();
 });
 document.addEventListener("click", (e) => {
-  if (!$("openingMenu").contains(e.target)) hideOpeningMenu();
+  if ($("openingMenu") && !$("openingMenu").contains(e.target)) hideOpeningMenu();
 });
 
 $("vwEdit").addEventListener("click", () => setView("edit"));
 $("vwSplit").addEventListener("click", () => setView("split"));
 $("vwPrev").addEventListener("click", () => setView("prev"));
+$("vwCards")?.addEventListener("click", () => setView("cards"));
+
+$("chapterStatusSelect")?.addEventListener("change", async (e) => {
+  if (currentFile) {
+    await setChapterStatus(currentFile, e.target.value);
+  }
+});
+
+document.querySelectorAll(".cb-filter-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".cb-filter-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    corkboardFilter = btn.dataset.filter || "all";
+    renderCorkboard();
+  });
+});
+
+$("corkboardSearch")?.addEventListener("input", (e) => {
+  corkboardSearchQuery = e.target.value;
+  renderCorkboard();
+});
+
+$("btnCorkboardAdd")?.addEventListener("click", () => {
+  if (typeof newChapter === "function") newChapter();
+});
 $("btnFocusMode")?.addEventListener("click", toggleFocusMode);
 $("btnFocusExit")?.addEventListener("click", exitFocusMode);
 $("btnFocusFont")?.addEventListener("click", toggleFocusFont);
@@ -7619,8 +9544,348 @@ $("btnPubZoomIn")?.addEventListener("click", () => {
   }
 });
 
+/* --------------------------------------------------------- command palette */
+
+let paletteItems = [];
+let paletteSelectedIndex = 0;
+
+function getAllPaletteCommands() {
+  const list = [];
+
+  // 0. Azione contestuale se c'è testo selezionato nell'editor
+  if (typeof ta !== "undefined" && ta && ta.selectionStart !== undefined && ta.selectionEnd !== undefined && ta.selectionEnd > ta.selectionStart) {
+    const sel = ta.value.substring(ta.selectionStart, ta.selectionEnd).trim();
+    if (sel) {
+      const shortSel = truncPoints(sel, 25);
+      list.push({
+        id: "act_insert_link_selection",
+        category: t("palette_cat_format") || "Formattazione",
+        icon: "🔗",
+        title: (currentLang === "it" ? `Inserisci link su "${shortSel}"` : `Insert link on "${shortSel}"`),
+        subtitle: (currentLang === "it" ? "Trasforma la selezione in [testo](url) (Cmd+Shift+K)" : "Wrap selection in [text](url) (Cmd+Shift+K)"),
+        action: () => applyFormatting("link")
+      });
+    }
+  }
+
+  // 1. Capitoli
+  if (state && state.book && state.book.chapters) {
+    state.book.chapters.forEach((c, idx) => {
+      list.push({
+        id: "ch_" + c.file,
+        category: t("palette_cat_chapters") || "Capitoli",
+        icon: "📖",
+        title: c.title || `Capitolo ${idx + 1}`,
+        subtitle: `${c.file} · ${c.words || 0} ${t("words_short") || "parole"} · ${c.status || "bozza"}`,
+        action: () => openChapter(c.file)
+      });
+    });
+  }
+
+  // 2. Note del quaderno
+  if (typeof notebookNotes !== "undefined" && notebookNotes && notebookNotes.length) {
+    notebookNotes.forEach((n) => {
+      list.push({
+        id: "note_" + n.id,
+        category: t("palette_cat_notes") || "Note",
+        icon: "📓",
+        title: n.title || "Nota senza titolo",
+        subtitle: truncPoints((n.content || "").replace(/\n/g, " "), 40),
+        action: () => {
+          openNotebookDrawer();
+          selectNote(n.id);
+        }
+      });
+    });
+  }
+
+  // 3. Azioni e Viste
+  list.push(
+    {
+      id: "act_new_chapter",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "✨",
+      title: t("btn_new_chapter") || "＋ Nuovo Capitolo",
+      subtitle: t("btn_new_chapter_title") || "Crea un nuovo capitolo nel libro",
+      action: () => $("btnNew")?.click()
+    },
+    {
+      id: "act_export_preview",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "📕",
+      title: t("btn_pub_preview") || "Anteprima di Pubblicazione Reale",
+      subtitle: "Compila ed esamina vero EPUB Kindle e PDF tipografico sfogliabile",
+      action: () => openPublicationPreviewModal()
+    },
+    {
+      id: "act_export_print",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "📄",
+      title: t("btn_print") || "Stampa / PDF Cartaceo",
+      subtitle: "Genera PDF ad alta fedeltà con formati 5x8, 6x9, margini e fogli di stile",
+      action: () => $("btnPrint")?.click()
+    },
+    {
+      id: "act_export_kindle",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "📱",
+      title: t("btn_kindle") || "EPUB per Kindle (KDP)",
+      subtitle: "Genera il file .epub pronto per Amazon KDP",
+      action: () => $("btnKindle")?.click()
+    },
+    {
+      id: "act_export_watch",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "👁️",
+      title: t("btn_watch") || "Live Watch Sincronizzato",
+      subtitle: "Apri anteprima live che si aggiorna in tempo reale",
+      action: () => $("btnWatch")?.click()
+    },
+    {
+      id: "act_vw_editor",
+      category: t("palette_cat_actions") || "Viste",
+      icon: "✍️",
+      title: "Vista: Solo Editor Markdown",
+      subtitle: "Massima concentrazione sul testo Markdown",
+      action: () => setView("edit")
+    },
+    {
+      id: "act_vw_split",
+      category: t("palette_cat_actions") || "Viste",
+      icon: "🪟",
+      title: "Vista: Editor e Anteprima Affiancati",
+      subtitle: "Scrittura a sinistra e anteprima tipografica live a destra",
+      action: () => setView("split")
+    },
+    {
+      id: "act_vw_prev",
+      category: t("palette_cat_actions") || "Viste",
+      icon: "🔖",
+      title: "Vista: Lettura (Solo Anteprima HTML)",
+      subtitle: "Lettura fluida del capitolo impaginato",
+      action: () => setView("prev")
+    },
+    {
+      id: "act_vw_cards",
+      category: t("palette_cat_actions") || "Viste",
+      icon: "📋",
+      title: "Vista: Lavagna a Schede (Corkboard)",
+      subtitle: "Panoramica a schede di tutti i capitoli con sinossi e conteggi",
+      action: () => setView("cards")
+    },
+    {
+      id: "act_focus_mode",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "🧘",
+      title: "Modalità Non Disturbo (Focus Mode)",
+      subtitle: "Scrittura a schermo intero senza distrazioni (F11 o Cmd+Shift+F)",
+      action: () => toggleFocusMode()
+    },
+    {
+      id: "act_toggle_sidebar",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "🗂️",
+      title: "Mostra / Nascondi Barra Laterale",
+      subtitle: "Comprimi o espandi la barra laterale sinistra (Cmd+\\)",
+      action: () => toggleSidebar()
+    },
+    {
+      id: "act_toggle_notes",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "📓",
+      title: "Apri / Chiudi Taccuino delle Note",
+      subtitle: "Cassetto laterale con gli appunti del libro",
+      action: () => toggleNotebookDrawer()
+    },
+    {
+      id: "act_synopsis",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "🏷️",
+      title: "Modifica Sinossi del Capitolo",
+      subtitle: "Apri la scheda sinossi e promemoria della scena",
+      action: () => showSynopsisModal()
+    },
+    {
+      id: "act_toggle_theme",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "🌙",
+      title: "Alterna Tema Scuro / Chiaro",
+      subtitle: "Inverti colori di fondo e testo per lavoro notturno",
+      action: () => toggleTheme()
+    },
+    {
+      id: "act_tutorial",
+      category: t("palette_cat_actions") || "Azioni",
+      icon: "❓",
+      title: "Guida & Scorciatoie da Tastiera",
+      subtitle: "Manuale integrato di PubCraft",
+      action: () => showTutorialModal("shortcuts")
+    }
+  );
+
+  return list;
+}
+
+function openCommandPalette() {
+  const modal = $("commandPaletteModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  const input = $("paletteInput");
+  if (input) {
+    input.value = "";
+    input.focus();
+  }
+  paletteSelectedIndex = 0;
+  renderPaletteResults("");
+}
+
+function closeCommandPalette() {
+  const modal = $("commandPaletteModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  if (ta && document.activeElement === $("paletteInput")) {
+    ta.focus();
+  }
+}
+
+function toggleCommandPalette() {
+  const modal = $("commandPaletteModal");
+  if (!modal) return;
+  if (modal.classList.contains("hidden")) {
+    openCommandPalette();
+  } else {
+    closeCommandPalette();
+  }
+}
+
+function renderPaletteResults(query) {
+  const container = $("paletteResults");
+  if (!container) return;
+  container.innerHTML = "";
+  const q = (query || "").toLowerCase().trim();
+  const all = getAllPaletteCommands();
+  paletteItems = all.filter((item) => {
+    if (!q) return true;
+    return item.title.toLowerCase().includes(q) || (item.subtitle && item.subtitle.toLowerCase().includes(q)) || item.category.toLowerCase().includes(q);
+  });
+
+  if (paletteItems.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "palette-empty";
+    empty.textContent = t("palette_no_results") || "Nessun comando o capitolo trovato";
+    container.appendChild(empty);
+    return;
+  }
+
+  if (paletteSelectedIndex >= paletteItems.length) paletteSelectedIndex = 0;
+  if (paletteSelectedIndex < 0) paletteSelectedIndex = paletteItems.length - 1;
+
+  let currentCategory = "";
+  paletteItems.forEach((item, idx) => {
+    if (item.category !== currentCategory && !q) {
+      currentCategory = item.category;
+      const catHeader = document.createElement("div");
+      catHeader.className = "palette-category-header";
+      catHeader.textContent = currentCategory;
+      container.appendChild(catHeader);
+    }
+
+    const row = document.createElement("div");
+    row.className = "palette-item" + (idx === paletteSelectedIndex ? " selected" : "");
+    row.innerHTML = `
+      <div class="palette-item-main">
+        <span class="palette-item-icon">${item.icon}</span>
+        <div>
+          <div class="palette-item-title">${esc(item.title)}</div>
+          ${item.subtitle ? `<div class="palette-item-meta">${esc(item.subtitle)}</div>` : ""}
+        </div>
+      </div>
+      <div class="palette-item-cat">${esc(item.category)}</div>
+    `;
+    row.addEventListener("click", () => {
+      closeCommandPalette();
+      item.action();
+    });
+    container.appendChild(row);
+
+    if (idx === paletteSelectedIndex) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  });
+}
+
+function initCommandPalette() {
+  $("paletteInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      paletteSelectedIndex++;
+      renderPaletteResults($("paletteInput").value);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      paletteSelectedIndex--;
+      renderPaletteResults($("paletteInput").value);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (paletteItems[paletteSelectedIndex]) {
+        const act = paletteItems[paletteSelectedIndex].action;
+        closeCommandPalette();
+        act();
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeCommandPalette();
+    }
+  });
+  $("paletteInput")?.addEventListener("input", (e) => {
+    paletteSelectedIndex = 0;
+    renderPaletteResults(e.target.value);
+  });
+  $("btnPaletteClose")?.addEventListener("click", closeCommandPalette);
+  $("commandPaletteModal")?.addEventListener("click", (e) => {
+    if (e.target === $("commandPaletteModal")) closeCommandPalette();
+  });
+  $("btnOpenPalette")?.addEventListener("click", openCommandPalette);
+  $("sbBtnPalette")?.addEventListener("click", openCommandPalette);
+}
+
 // Scorciatoie da tastiera globali (Focus mode, Escape, ecc.)
 document.addEventListener("keydown", (e) => {
+  // Scorciatoia diretta per inserimento link: Cmd+Shift+K o Ctrl+Shift+K
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    applyFormatting("link");
+    return;
+  }
+
+  // Command Palette (stile Sublime / Linear / Obsidian): Cmd+K o Ctrl+K
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    toggleCommandPalette();
+    return;
+  }
+
+  // Scorciatoie Segmented Control Viste: Cmd+1, Cmd+2, Cmd+3, Cmd+4
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+    if (e.key === "1") {
+      if (state.vault && state.book) { e.preventDefault(); setView("edit"); return; }
+    } else if (e.key === "2") {
+      if (state.vault && state.book) { e.preventDefault(); setView("split"); return; }
+    } else if (e.key === "3") {
+      if (state.vault && state.book) { e.preventDefault(); setView("prev"); return; }
+    } else if (e.key === "4") {
+      if (state.vault && state.book) { e.preventDefault(); setView("cards"); return; }
+    }
+  }
+
+  // Toggle Barra Laterale (stile Obsidian): Cmd+\ o Ctrl+\
+  if ((e.metaKey || e.ctrlKey) && (e.key === "\\" || e.code === "Backslash")) {
+    if (state.vault && state.book) {
+      e.preventDefault();
+      toggleSidebar();
+      return;
+    }
+  }
+
   // Modalità non disturbo: F11 o Cmd+Shift+F / Ctrl+Shift+F
   if (e.key === "F11" || ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "F" || e.key === "f"))) {
     if (state.book && currentFile) {
@@ -7631,7 +9896,10 @@ document.addEventListener("keydown", (e) => {
   }
 
   if (e.key === "Escape") {
-    if ($("pubPreviewModal") && !$("pubPreviewModal").classList.contains("hidden")) {
+    if ($("commandPaletteModal") && !$("commandPaletteModal").classList.contains("hidden")) {
+      closeCommandPalette();
+      return;
+    } else if ($("pubPreviewModal") && !$("pubPreviewModal").classList.contains("hidden")) {
       closePublicationPreviewModal();
       return;
     } else if ($("tutorialModal") && !$("tutorialModal").classList.contains("hidden")) {
@@ -8285,6 +10553,11 @@ document.addEventListener("keydown", (e) => {
 
 
 initTheme();
+initSidebarToggle();
+initCommandPalette();
+initBookMenu();
+initChapterTitleEditing();
+initSettingsMenu();
 
 refreshState().then(() => {
   initTheme();

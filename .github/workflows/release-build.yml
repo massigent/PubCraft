@@ -1,0 +1,117 @@
+name: Release builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x64 build, test and packages
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: src/pubcraftgui/go.sum
+      - name: Install build dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y musl-tools zip unzip squashfs-tools libglib2.0-0
+      - name: Compile and test actual release binaries
+        run: |
+          make all CC=musl-gcc CFLAGS='-std=c11 -Wall -Wextra -O2 -static'
+          ./tests/test_cli.sh build/pubcraft
+          go -C src/pubcraftgui test -race -count=1 ./...
+          go -C src/pubcraftgui vet ./...
+          cp build/pubcraft build/pubcraft-linux-amd64
+          cp build/pubcraftgui build/pubcraftgui-linux-amd64
+          python3 scripts/smoke_release.py --cli build/pubcraft-linux-amd64 --gui build/pubcraftgui-linux-amd64
+      - name: Download and verify packaging tools
+        run: |
+          curl --fail --location --retry 3 https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -o "$RUNNER_TEMP/appimagetool"
+          echo "95cbe7cce9717fce90c484e34052ee7c7f1d7635b33c12525b4776826a7d29b6  $RUNNER_TEMP/appimagetool" | sha256sum -c -
+          curl --fail --location --retry 3 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64 -o "$RUNNER_TEMP/runtime-x86_64"
+          echo "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46  $RUNNER_TEMP/runtime-x86_64" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/appimagetool"
+      - name: Package and verify Linux downloads
+        env:
+          APPIMAGETOOL: ${{ runner.temp }}/appimagetool
+          APPIMAGE_RUNTIME: ${{ runner.temp }}/runtime-x86_64
+        run: |
+          python3 scripts/package_release.py linux
+          python3 tests/check_packages.py "build/PubCraft-$(cat VERSION)-linux-x64.tar.gz"
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar -xzf "build/PubCraft-$(cat VERSION)-linux-x64.tar.gz" -C "$RUNNER_TEMP/unpacked"
+          python3 scripts/smoke_release.py --cli "$RUNNER_TEMP/unpacked/pubcraft" --gui "$RUNNER_TEMP/unpacked/pubcraftgui"
+          dpkg-deb --info "build/PubCraft-$(cat VERSION)-linux-amd64.deb"
+          dpkg-deb -x "build/PubCraft-$(cat VERSION)-linux-amd64.deb" "$RUNNER_TEMP/deb"
+          python3 scripts/smoke_release.py --cli "$RUNNER_TEMP/deb/usr/bin/pubcraft" --gui "$RUNNER_TEMP/deb/usr/bin/pubcraftgui"
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/build/PubCraft-$(cat "$GITHUB_WORKSPACE/VERSION")-x86_64.AppImage" --appimage-extract
+          python3 "$GITHUB_WORKSPACE/scripts/smoke_release.py" --cli squashfs-root/usr/bin/pubcraft --gui squashfs-root/usr/bin/pubcraftgui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x64
+          path: |
+            build/PubCraft-*.tar.gz
+            build/PubCraft-*.deb
+            build/PubCraft-*.AppImage
+            build/pubcraft-linux-amd64
+            build/pubcraftgui-linux-amd64
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 build, smoke tests and packages
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: src/pubcraftgui/go.sum
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-nsis
+      - name: Compile native C binary
+        shell: msys2 {0}
+        run: |
+          mkdir -p build
+          gcc -std=c11 -Wall -Wextra -O2 -static src/pubcraft.c -o build/pubcraft-windows-amd64.exe
+      - name: Build GUI and native smoke test
+        shell: pwsh
+        run: |
+          go -C src/pubcraftgui build -trimpath -ldflags '-H=windowsgui' -o ../../build/pubcraftgui-windows-amd64.exe .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/smoke_release.py --cli build/pubcraft-windows-amd64.exe --gui build/pubcraftgui-windows-amd64.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and test portable archive and installer
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
+          python scripts/package_release.py windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content VERSION).Trim()
+          python tests/check_packages.py "build/PubCraft-$version-windows-x64.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Expand-Archive "build/PubCraft-$version-windows-x64.zip" "$env:RUNNER_TEMP\portable"
+          python scripts/smoke_release.py --cli "$env:RUNNER_TEMP\portable\pubcraft.exe" --gui "$env:RUNNER_TEMP\portable\pubcraftgui.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installDir = "$env:RUNNER_TEMP\installed"
+          $p = Start-Process -FilePath "build/PubCraft-Setup-$version.exe" -ArgumentList '/S',"/D=$installDir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer failed: $($p.ExitCode)" }
+          python scripts/smoke_release.py --cli "$installDir\pubcraft.exe" --gui "$installDir\pubcraftgui.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: |
+            build/PubCraft-*.zip
+            build/PubCraft-Setup-*.exe
+            build/pubcraft-windows-amd64.exe
+            build/pubcraftgui-windows-amd64.exe
+          if-no-files-found: error

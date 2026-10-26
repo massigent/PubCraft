@@ -57,8 +57,7 @@ type diagRegistry struct {
 var globalDiag = newDiagRegistry()
 
 func newDiagRegistry() *diagRegistry {
-	home, _ := os.UserHomeDir()
-	pDir := filepath.Join(home, ".pubcraft")
+	pDir := getPubCraftConfigDir()
 	_ = os.MkdirAll(pDir, 0700)
 	fPath := filepath.Join(pDir, "diagnostics.json")
 
@@ -283,7 +282,7 @@ func PrepareBugReport(errorIDs []string, description, expected, observed string)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Segnalazione PubCraft — %s\n\n", reportID))
 	sb.WriteString(fmt.Sprintf("- **Data e ora UTC:** %s\n", now.Format(time.RFC3339)))
-	sb.WriteString("- **Versione PubCraft:** 1.0.0-alpha.1\n")
+	fmt.Fprintf(&sb, "- **Versione PubCraft:** %s\n", appVersion)
 	sb.WriteString(fmt.Sprintf("- **Ambiente:** %s / %s (runtime: %s)\n\n", runtime.GOOS, runtime.GOARCH, runtime.Version()))
 
 	sb.WriteString("## 1. Descrizione del problema\n")
@@ -330,7 +329,7 @@ func PrepareBugReport(errorIDs []string, description, expected, observed string)
 	rep := &BugReport{
 		ReportID:        reportID,
 		CreatedAt:       now,
-		AppVersion:      "1.0.0-alpha.1",
+		AppVersion:      appVersion,
 		OSArch:          fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		GoVersion:       runtime.Version(),
 		Description:     sanitizeDiagText(description),

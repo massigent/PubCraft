@@ -51,6 +51,43 @@ func TestBookTitleInPlaceUpdate(t *testing.T) {
 	}
 }
 
+func TestChapterTitleInPlaceUpdate(t *testing.T) {
+	tmpDir := t.TempDir()
+	setVault(tmpDir)
+
+	bk := &Book{
+		Title:    "Mio Libro",
+		Language: "it",
+		Chapters: []Chapter{
+			{File: "01.md", ID: "id1", Title: "Vecchio Capitolo"},
+		},
+	}
+	if err := writeBookYAML(bk); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(tmpDir, "01.md"), []byte("---\ntitle: \"Vecchio Capitolo\"\n---\n\nTesto qui"), 0644)
+
+	body := strings.NewReader(`{"file":"01.md","title":"Nuovo Capitolo Riscritto"}`)
+	req := httptest.NewRequest("POST", "/api/setchaptertitle", body)
+	w := httptest.NewRecorder()
+
+	apiSetChapterTitle(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status atteso 200, ottenuto %d: %s", w.Code, w.Body.String())
+	}
+
+	updated := loadBook()
+	if updated.Chapters[0].Title != "Nuovo Capitolo Riscritto" {
+		t.Errorf("titolo capitolo atteso 'Nuovo Capitolo Riscritto', ottenuto %q", updated.Chapters[0].Title)
+	}
+
+	// Verifica aggiornamento frontmatter nel file markdown
+	content, _ := os.ReadFile(filepath.Join(tmpDir, "01.md"))
+	if !strings.Contains(string(content), `title: "Nuovo Capitolo Riscritto"`) {
+		t.Errorf("frontmatter non aggiornato nel file: %s", string(content))
+	}
+}
+
 func TestNotebookLifecycleAndChapterConversion(t *testing.T) {
 	tmpDir := t.TempDir()
 	setVault(tmpDir)

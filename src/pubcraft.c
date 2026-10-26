@@ -5,7 +5,6 @@
  * Licenza MIT — 2026 PubCraft Contributors.
  */
 #define _DARWIN_C_SOURCE 1
-#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +36,7 @@
 #include <windows.h>
 #endif
 
-#define VERSION "1.0.0-alpha.1"
+#define VERSION "1.0.0-alpha.2"
 
 static void die(const char *msg) { perror(msg); exit(1); }
 
@@ -108,6 +107,182 @@ static unsigned char *read_file(const char *path, size_t *out_len) {
     if (out_len) *out_len = r;
     return b;
 }
+/* Rimuove BOM UTF-8 iniziale e normalizza \r\n e \r isolati a \n.
+ * Applicate ai testi Markdown/YAML in ingresso (CRLF di Windows, BOM). */
+static void normalize_text_buffer(char *b, size_t *n) {
+    size_t r = 0;
+    if (*n >= 3 && (unsigned char)b[0] == 0xEF && (unsigned char)b[1] == 0xBB && (unsigned char)b[2] == 0xBF) r = 3;
+    size_t w = 0;
+    while (r < *n) {
+        if (b[r] == '\r') {
+            b[w++] = '\n';
+            r++;
+            if (r < *n && b[r] == '\n') r++;
+        } else {
+            b[w++] = b[r++];
+        }
+    }
+    b[w] = 0;
+    *n = w;
+}
+
+/* -------------------------------------------------------------------------
+ * Policy XML 1.0 / UTF-8 per l'output (EPUB, XHTML, OPF, HTML di stampa).
+ *
+ * Tutto il testo che finisce nei file generati passa da xml_sanitize_utf8():
+ *  - Unicode valido viene conservato;
+ *  - i caratteri non ammessi da XML 1.0 (C0 tranne TAB/LF/CR, U+FFFE/U+FFFF)
+ *    vengono rimossi;
+ *  - le sequenze UTF-8 invalide vengono sostituite con U+FFFD.
+ * La sostituzione è segnalata su stderr (una volta per processo) e non è mai
+ * silenziosa: l'alternativa sarebbe un EPUB malformato con exit code 0.
+ * L'escaping HTML (&, <, >, ") resta separato (fprint_esc_char), così non si
+ * introducono doppi escape.
+ * ------------------------------------------------------------------------- */
+static int g_xml_sanitize_warned = 0;
+static unsigned long g_xml_sanitize_changes = 0;
+
+/* Decodifica una sequenza UTF-8 valida; 0 se invalida. Non legge oltre il
+ * terminatore NUL (le continuation mancanti sono NUL, quindi in-bounds). */
+static int utf8_next_cp(const unsigned char *s, unsigned int *cp) {
+    unsigned char c = s[0];
+    if (c < 0x80) { *cp = c; return 1; }
+    if (c >= 0xC2 && c <= 0xDF) {
+        if ((s[1] & 0xC0) != 0x80) return 0;
+        *cp = ((unsigned int)(c & 0x1F) << 6) | (unsigned int)(s[1] & 0x3F);
+        return 2;
+    }
+    if (c >= 0xE0 && c <= 0xEF) {
+        if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80) return 0;
+        if (c == 0xE0 && s[1] < 0xA0) return 0;   /* overlong */
+        if (c == 0xED && s[1] > 0x9F) return 0;   /* surrogati */
+        *cp = ((unsigned int)(c & 0x0F) << 12) | ((unsigned int)(s[1] & 0x3F) << 6) | (unsigned int)(s[2] & 0x3F);
+        return 3;
+    }
+    if (c >= 0xF0 && c <= 0xF4) {
+        if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80 || (s[3] & 0xC0) != 0x80) return 0;
+        if (c == 0xF0 && s[1] < 0x90) return 0;   /* overlong */
+        if (c == 0xF4 && s[1] > 0x8F) return 0;   /* > U+10FFFF */
+        *cp = ((unsigned int)(c & 0x07) << 18) | ((unsigned int)(s[1] & 0x3F) << 12) |
+              ((unsigned int)(s[2] & 0x3F) << 6) | (unsigned int)(s[3] & 0x3F);
+        return 4;
+    }
+    return 0;
+}
+
+static int xml_cp_allowed(unsigned int cp) {
+    if (cp == 0x9 || cp == 0xA || cp == 0xD) return 1;
+    if (cp < 0x20) return 0;
+    if (cp == 0xFFFE || cp == 0xFFFF) return 0;
+    return 1;
+}
+
+/* Formato UUID canonico 8-4-4-4-12 (solo layout: accetta anche ID legacy
+ * generati dalle versioni precedenti). */
+static int uuid_format_ok(const char *s) {
+    if (!s) return 0;
+    if (strlen(s) != 36) return 0;
+    for (size_t i = 0; i < 36; i++) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (s[i] != '-') return 0;
+        } else if (!isxdigit((unsigned char)s[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Valore da usare dopo "urn:uuid:" nell'OPF.
+ * - UUID canonico -> se stesso (lowercase);
+ * - legacy "id"+UUID -> UUID senza prefisso (stesso identificatore, forma valida);
+ * - altro -> nessun valore (il chiamante emette l'identificatore legacy senza
+ *   il prefisso urn:uuid:, che sarebbe mendace).
+ * Coerente con publicationUUID() in Go. */
+static int uuid_publication_value(const char *stored, char *out, size_t sz) {
+    if (!stored || !*stored || !out || sz < 37) return 0;
+    const char *v = stored;
+    while (*v == ' ' || *v == '\t') v++;
+    if ((v[0] == 'i' || v[0] == 'I') && (v[1] == 'd' || v[1] == 'D') && uuid_format_ok(v + 2)) {
+        v += 2;
+    }
+    if (!uuid_format_ok(v)) return 0;
+    for (size_t i = 0; i < 36; i++) out[i] = (char)tolower((unsigned char)v[i]);
+    out[36] = 0;
+    return 1;
+}
+
+static char *xml_sanitize_utf8(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *out = malloc(n * 3 + 1); /* peggiore: ogni byte -> U+FFFD (3 byte) */
+    if (!out) return NULL;
+    size_t o = 0;
+    int changed = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        unsigned int cp = 0;
+        int len = utf8_next_cp(p, &cp);
+        if (len == 0) {
+            out[o++] = (char)0xEF; out[o++] = (char)0xBF; out[o++] = (char)0xBD;
+            p++;
+            changed = 1;
+            continue;
+        }
+        if (!xml_cp_allowed(cp)) {
+            p += (size_t)len;
+            changed = 1;
+            continue;
+        }
+        memcpy(out + o, p, (size_t)len);
+        o += (size_t)len;
+        p += (size_t)len;
+    }
+    out[o] = 0;
+    if (changed) {
+        g_xml_sanitize_changes++;
+        if (!g_xml_sanitize_warned) {
+            g_xml_sanitize_warned = 1;
+            fprintf(stderr, "avviso: testo non valido per XML/UTF-8 rilevato; "
+                            "i caratteri non consentiti sono stati sostituiti/rimossi per generare file validi.\n");
+        }
+    }
+    return out;
+}
+
+/* Nomi capitolo consentiti: semplice nome file .md/.markdown nella cartella
+ * del libro. Niente percorsi assoluti, separatori, ".." o file nascosti:
+ * impedisce lettura/inclusione di file fuori dal vault (es. book.yaml
+ * ricevuti da terzi con "file: ../secret"). */
+static int is_safe_chapter_file(const char *v) {
+    size_t L;
+    if (!v || !(L = strlen(v))) return 0;
+    if (v[0] == '/' || v[0] == '\\' || v[0] == '.') return 0;
+    if (strchr(v, '/') || strchr(v, '\\')) return 0;
+    if (strstr(v, "..")) return 0;
+    if (L < 4) return 0;
+    const char *dot = strrchr(v, '.');
+    if (!dot) return 0;
+    if (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".markdown")) return 1;
+    return 0;
+}
+
+/* Verifica che vdir/file resti dentro vdir anche risolvendo i symlink
+ * (symlink piantati nel vault verso /etc/passwd). Ritorna 0 se sicuro. */
+static int vault_contains(const char *vdir, const char *file) {
+    char mp[PATH_MAX], rv[PATH_MAX], rd[PATH_MAX];
+    snprintf(mp, sizeof mp, "%s/%s", vdir, file);
+    if (!realpath(vdir, rd)) return -1;
+    /* file esistente: risolvi tutto; assente: risolvi la genitrice */
+    char *rp = realpath(mp, rv);
+    if (rp) {
+        size_t Ld = strlen(rd);
+        if (strncmp(rv, rd, Ld) != 0 || (rv[Ld] != '/' && rv[Ld] != 0)) return -1;
+        return 0;
+    }
+    /* assente: il contenitore lessicale basta (nome gia' validato) */
+    return 0;
+}
+
 static int write_file(const char *path, const void *data, size_t n) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
@@ -160,6 +335,8 @@ static int is_same_file(const char *path1, const char *path2) {
 
 static int safe_copy_file(const char *src_file, const char *dst_file) {
     if (is_same_file(src_file, dst_file)) return 0;
+    struct stat st;
+    if (stat(src_file, &st) != 0 || !S_ISREG(st.st_mode)) return -1;
     FILE *a = fopen(src_file, "rb");
     if (!a) return -1;
     char tmp[PATH_MAX];
@@ -1006,6 +1183,11 @@ static int load_book(const char *src_archive, const char *tmp, Book *bk) {
 
 /* ---------- HTML e Markdown Inline ---------- */
 static void fprint_esc_char(FILE *f, char c) {
+    unsigned char u = (unsigned char)c;
+    /* Difesa in profondità per i chiamanti che emettono un singolo byte:
+     * XML 1.0 non ammette C0 tranne tab/LF/CR. Il testo multibyte passa
+     * sempre da xml_sanitize_utf8() prima di arrivare qui. */
+    if (u < 0x20 && u != '\t' && u != '\n' && u != '\r') return;
     switch (c) {
         case '&': fputs("&amp;", f); break;
         case '<': fputs("&lt;", f); break;
@@ -1017,13 +1199,19 @@ static void fprint_esc_char(FILE *f, char c) {
 
 static void fprint_esc(FILE *f, const char *s) {
     if (!s) return;
-    for (; *s; s++) {
-        fprint_esc_char(f, *s);
+    char *clean = xml_sanitize_utf8(s);
+    if (!clean) return;
+    for (const char *p = clean; *p; p++) {
+        fprint_esc_char(f, *p);
     }
+    free(clean);
 }
 
 static void fprint_md_inline(FILE *f, const char *s) {
     if (!s) return;
+    char *clean = xml_sanitize_utf8(s);
+    if (!clean) return;
+    s = clean;
     const char *p = s;
     while (*p) {
         // Codice inline `codice`
@@ -1159,10 +1347,14 @@ static void fprint_md_inline(FILE *f, const char *s) {
         fprint_esc_char(f, *p);
         p++;
     }
+    free(clean);
 }
 /* Stampa paragrafo iniziale avvolgendo il primo carattere alfabetico in <span class="dropcap"> */
 static void fprint_esc_with_dropcap(FILE *f, const char *s) {
     if (!s) return;
+    char *clean = xml_sanitize_utf8(s);
+    if (!clean) return;
+    s = clean;
     const char *p = s;
     while (*p == ' ' || *p == '\t') p++;
     while (*p) {
@@ -1181,7 +1373,7 @@ static void fprint_esc_with_dropcap(FILE *f, const char *s) {
             break;
         }
     }
-    if (!*p) return;
+    if (!*p) { free(clean); return; }
 
     size_t glen = 0;
     unsigned char c = (unsigned char)*p;
@@ -1216,11 +1408,15 @@ static void fprint_esc_with_dropcap(FILE *f, const char *s) {
         p += glen;
     }
     fprint_md_inline(f, p);
+    free(clean);
 }
 
 /* Stampa paragrafo iniziale avvolgendo le prime 3 parole in <span class="first-phrase"> */
 static void fprint_esc_with_first_phrase(FILE *f, const char *s) {
     if (!s) return;
+    char *clean = xml_sanitize_utf8(s);
+    if (!clean) return;
+    s = clean;
     const char *p = s;
     while (*p == ' ' || *p == '\t') p++;
     int words = 0;
@@ -1239,17 +1435,16 @@ static void fprint_esc_with_first_phrase(FILE *f, const char *s) {
     if (end_phrase > p) {
         fprintf(f, "<span class=\"first-phrase\">");
         for (const char *q = p; q < end_phrase; q++) {
-            if (*q == '&') fputs("&amp;", f);
-            else if (*q == '<') fputs("&lt;", f);
-            else if (*q == '>') fputs("&gt;", f);
-            else if (*q == '"') fputs("&quot;", f);
-            else fputc(*q, f);
+            unsigned char c = (unsigned char)*q;
+            if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') continue;
+            fprint_esc_char(f, *q);
         }
         fprintf(f, "</span>");
         fprint_md_inline(f, end_phrase);
     } else {
         fprint_md_inline(f, p);
     }
+    free(clean);
 }
 /* interruzione di scena: riga fatta solo di *, - e spazi (***, * * *, ---) */
 static int is_scene_break(const char *s);
@@ -1577,22 +1772,29 @@ static void resolve_archive_images(Book *bk, const char *imgd) {
             }
         }
 }
-/* copia images/ di un vault (nomi invariati, protetta da sovrascritture identiche) */
-static void copy_vault_images(const char *vdir, const char *outimg) {
-    char src[PATH_MAX];
-    snprintf(src, sizeof src, "%s/images", vdir);
+/* copia ricorsiva (preserva sotto-cartelle, salta non-regolari) */
+static void copy_tree_files(const char *src, const char *dst) {
     DIR *d = opendir(src);
     if (!d) return;
-    mkdir_p(outimg);
+    mkdir_p(dst);
     struct dirent *e;
     while ((e = readdir(d))) {
         if (e->d_name[0] == '.') continue;
         char sf[PATH_MAX], df[PATH_MAX];
         snprintf(sf, sizeof sf, "%s/%s", src, e->d_name);
-        snprintf(df, sizeof df, "%s/%s", outimg, e->d_name);
-        safe_copy_file(sf, df);
+        snprintf(df, sizeof df, "%s/%s", dst, e->d_name);
+        struct stat st;
+        if (stat(sf, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) copy_tree_files(sf, df);
+        else if (S_ISREG(st.st_mode)) safe_copy_file(sf, df);
     }
     closedir(d);
+}
+/* copia images/ di un vault (nomi invariati, protetta da sovrascritture identiche) */
+static void copy_vault_images(const char *vdir, const char *outimg) {
+    char src[PATH_MAX];
+    snprintf(src, sizeof src, "%s/images", vdir);
+    copy_tree_files(src, outimg);
 }
 /* copia fonts (dal vault, da fonts/, dalla GUI o dal sistema) dentro outdir/fonts */
 static void copy_fonts_from_dir(const char *src, const char *outfonts) {
@@ -1722,10 +1924,36 @@ static void emit_preset_style(FILE *f, const char *style_id) {
             ".chapter h2 { font-family: 'Baskerville', 'Times New Roman', serif; font-size: 1.4em; font-weight: normal; text-align: center; text-transform: uppercase; letter-spacing: .18em; margin: 2em auto .3em; }\n"
             ".chapter .dropcap { font-family: 'Cinzel Decorative', 'Cinzel', 'Baskerville', serif; font-size: 3.7em; font-weight: normal; font-style: normal; float: left; line-height: .72; margin-top: .06em; margin-bottom: -.04em; margin-right: .14em; }\n"
         );
-    } else if (!strcmp(style_id, "whisper") || !strcmp(style_id, "romantico")) {
+    } else if (!strcmp(style_id, "whisper")) {
         fprintf(f,
             ".chapter { color: #211e1a; line-height: 1.74; }\n"
             ".chapter h2 { font-family: Georgia, serif; font-size: 1.35em; font-weight: normal; text-align: center; letter-spacing: .12em; text-transform: uppercase; margin: 2.2em auto .3em; }\n"
+        );
+    } else if (!strcmp(style_id, "romantico")) {
+        fprintf(f,
+            ".chapter { color: #1c1819; line-height: 1.65; }\n"
+            ".chapter h2 { font-family: 'Palatino', 'Book Antiqua', serif; font-size: 1.4em; font-weight: normal; text-align: center; font-variant: small-caps; letter-spacing: .12em; margin: 1.9em auto .3em; }\n"
+            ".chapter .dropcap { font-family: 'Palatino', 'Book Antiqua', serif; font-size: 3.6em; font-weight: normal; font-style: normal; float: left; line-height: .72; margin-top: .06em; margin-bottom: -.04em; margin-right: .13em; }\n"
+        );
+    } else if (!strcmp(style_id, "decorum")) {
+        fprintf(f,
+            ".chapter { color: #151413; line-height: 1.66; }\n"
+            ".chapter h2 { font-family: 'Bodoni Moda', 'Didot', serif; font-size: 1.55em; font-weight: 500; text-align: center; text-transform: uppercase; letter-spacing: .26em; margin: 2.2em auto .4em; }\n"
+            ".chapter h2::after { content: '\\25C7   \\25C6   \\25C7'; display: block; text-align: center; letter-spacing: .35em; color: #7a6850; margin: .8em auto 1.8em; }\n"
+            ".chapter .dropcap { font-family: 'Bodoni Moda', 'Didot', serif; font-size: 3.7em; font-weight: 500; font-style: normal; float: left; line-height: .75; margin-top: .05em; margin-bottom: -.05em; margin-right: .12em; }\n"
+        );
+    } else if (!strcmp(style_id, "directive")) {
+        fprintf(f,
+            ".chapter { color: #181818; line-height: 1.62; }\n"
+            ".chapter h2 { font-family: 'Montserrat', sans-serif; font-size: 1.45em; font-weight: 700; text-align: left; text-transform: uppercase; letter-spacing: .08em; margin: 2.4em 0 .3em; }\n"
+            ".chapter h2::after { content: ''; display: block; width: 44px; height: 3px; background: #111; margin: .7em 0 1.6em 0; }\n"
+            ".chapter .dropcap { font-family: 'Montserrat', sans-serif; font-size: 3.2em; font-weight: 700; font-style: normal; float: left; line-height: .74; margin-top: .08em; margin-bottom: -.04em; margin-right: .14em; }\n"
+        );
+    } else {
+        fprintf(stderr, "avviso: stile '%s' non supportato dall'export diretto, uso 'classic'\n", style_id);
+        fprintf(f,
+            ".chapter { color: #1a1815; line-height: 1.62; }\n"
+            ".chapter h2 { font-family: 'Palatino', 'Palatino Linotype', Georgia, serif; font-size: 1.35em; font-weight: normal; text-align: center; text-transform: uppercase; letter-spacing: .15em; margin: 1.8em auto .3em; line-height: 1.45; }\n"
         );
     }
 }
@@ -1735,6 +1963,37 @@ typedef struct {
     SegType types[16];
     int item_open[16];
 } ListState;
+
+/* Stack delle indentazioni dei list item consecutivi. Il livello è relativo:
+ * un aumento di indentazione crea UN solo livello in più, indipendentemente
+ * dal fatto che lo stile usi 2 o 4 spazi. Evita <ul>/<ol> vuoti annidati per
+ * "saltare" livelli. */
+typedef struct { int indents[9]; int depth; } ListIndent;
+
+static void list_indent_reset(ListIndent *li) {
+    memset(li, 0, sizeof *li);
+}
+
+static int list_indent_level(ListIndent *li, int indent) {
+    if (li->depth <= 0) {
+        li->indents[0] = indent;
+        li->depth = 1;
+        return 0;
+    }
+    if (indent > li->indents[li->depth - 1]) {
+        if (li->depth < 9) {
+            li->indents[li->depth] = indent;
+            li->depth++;
+        }
+        return li->depth - 1;
+    }
+    while (li->depth > 1 && indent < li->indents[li->depth - 1]) li->depth--;
+    if (indent != li->indents[li->depth - 1]) {
+        /* rientro intermedio o < base: si resta al livello corrente */
+        li->indents[li->depth - 1] = indent;
+    }
+    return li->depth - 1;
+}
 
 static void list_close_to(FILE *f, ListState *ls, int target_depth) {
     while (ls->depth > target_depth) {
@@ -1759,6 +2018,10 @@ static void list_close_all(FILE *f, ListState *ls) {
 static void list_handle_item(FILE *f, ListState *ls, SegType type, int level, int num, const char *text) {
     if (level < 0) level = 0;
     if (level > 8) level = 8;
+    /* Invariante di struttura: nessun salto di livello. Un contenitore può
+     * essere aperto solo un livello sotto quello corrente, così non vengono
+     * mai emessi <ul>/<ol> vuoti per "saltare" livelli. */
+    if (level > ls->depth) level = ls->depth;
 
     if (level < ls->depth && ls->types[level] != type) {
         list_close_to(f, ls, level);
@@ -1893,6 +2156,50 @@ static int export_html(const char *archive_path, const char *outdir) {
     return rc;
 }
 
+/* Copia una singola immagine referenziata preservando le sotto-cartelle.
+ * Cerca prima in vdir/images/ (vault, anche annidate), poi in imgd (archivio).
+ * Rifiuta fughe dal vault. */
+static void copy_epub_image(Book *bk, const char *imgd, const char *name, const char *dst) {
+    char src[PATH_MAX], df[PATH_MAX], dd[PATH_MAX];
+    struct stat st;
+    const char *chosen = NULL;
+    if (!name || !*name) return;
+    if (name[0] == '/' || name[0] == '\\' || strstr(name, "..") || strchr(name, '\\') || strchr(name, ':')) return;
+    if (bk->vdir) {
+        char rel[PATH_MAX];
+        snprintf(rel, sizeof rel, "images/%s", name);
+        snprintf(src, sizeof src, "%s/%s", bk->vdir, rel);
+        if (stat(src, &st) == 0 && S_ISREG(st.st_mode) && vault_contains(bk->vdir, rel) == 0)
+            chosen = src;
+    }
+    if (!chosen) {
+        snprintf(src, sizeof src, "%s/%s", imgd, name);
+        if (stat(src, &st) != 0 || !S_ISREG(st.st_mode)) return;
+        chosen = src;
+    }
+    snprintf(df, sizeof df, "%s/%s", dst, name);
+    snprintf(dd, sizeof dd, "%s", df);
+    char *slash = strrchr(dd, '/');
+    if (slash) { *slash = 0; mkdir_p(dd); }
+    safe_copy_file(chosen, df);
+}
+
+/* Lingua BCP47 semplificata: solo [A-Za-z-]{2,12}, altrimenti "it". */
+static const char *sanitize_lang(const char *l) {
+    static char buf[16];
+    if (!l || !*l) return "it";
+    size_t n = 0;
+    for (const char *p = l; *p && n < sizeof buf - 1; p++) {
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '-')
+            buf[n++] = *p;
+        else
+            return "it";
+    }
+    buf[n] = 0;
+    if (n < 2) return "it";
+    return buf;
+}
+
 /* kindle=1: prima immagine marcata come copertina + checklist KDP */
 static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int kindle) {
     char abs_outepub[PATH_MAX];
@@ -1903,7 +2210,7 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
         if (getcwd(cwd, sizeof cwd)) snprintf(abs_outepub, sizeof abs_outepub, "%s/%s", cwd, outepub);
         else snprintf(abs_outepub, sizeof abs_outepub, "%s", outepub);
     }
-    const char *lang = (bk->language && bk->language[0]) ? bk->language : "it";
+    const char *lang = sanitize_lang(bk->language);
 
     char buildt[PATH_MAX];
     pc_tmp_dir(buildt, sizeof buildt, "pubcraft-epub");
@@ -1911,23 +2218,12 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
     snprintf(oebps, sizeof oebps, "%s/OEBPS", buildt);
     snprintf(metainf, sizeof metainf, "%s/META-INF", buildt);
     mkdir_p(oebps); mkdir_p(metainf);
-    /* immagini dentro OEBPS/images (imgd e' gia' popolato dal chiamante) */
+    /* OEBPS/images verra' popolata solo con le immagini referenziate
+     * (+ copertina): niente file orfani nello ZIP fuori dal manifest. */
     {
         char dst[PATH_MAX];
         snprintf(dst, sizeof dst, "%s/images", oebps);
         mkdir_p(dst);
-        DIR *d = opendir(imgd);
-        if (d) {
-            struct dirent *e;
-            while ((e = readdir(d))) {
-                if (e->d_name[0] == '.') continue;
-                char sf[PATH_MAX], df[PATH_MAX];
-                snprintf(sf, sizeof sf, "%s/%s", imgd, e->d_name);
-                snprintf(df, sizeof df, "%s/%s", dst, e->d_name);
-                safe_copy_file(sf, df);
-            }
-            closedir(d);
-        }
     }
     char p[PATH_MAX];
     snprintf(p, sizeof p, "%s/mimetype", buildt);
@@ -1953,7 +2249,7 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
 
             fprintf(fcss, ".chapter .first-para { text-indent: 0; }\n");
             fprintf(fcss, ".chapter .dropcap { font-size: 3.2em; float: left; line-height: .75; margin-right: .12em; margin-top: .04em; }\n");
-            fprintf(fcss, ".chapter .smallcaps { font-variant: small-caps; letter-spacing: .08em; font-weight: 600; }\n");
+
 
             if (bk->scenebreak && (!strcmp(bk->scenebreak, "fleuron") || !strcmp(bk->scenebreak, "ornament"))) {
                 fprintf(fcss, "hr.sb::after, hr::after { content: '❦'; font-size: 1.3em; letter-spacing: normal; }\n");
@@ -2105,7 +2401,8 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
 
     const char *cover_file = NULL;
     char exp_cover_buf[PATH_MAX];
-    if (bk->cover && bk->cover[0]) {
+    if (bk->cover && bk->cover[0] && !strchr(bk->cover, '\\') && !strstr(bk->cover, "..") &&
+        !strchr(bk->cover, ':') && bk->cover[0] != '/' && vault_contains(bk->vdir ? bk->vdir : ".", bk->cover) == 0) {
         const char *bn = strrchr(bk->cover, '/');
         bn = bn ? bn + 1 : bk->cover;
         snprintf(exp_cover_buf, sizeof exp_cover_buf, "%s/images/%s", oebps, bn);
@@ -2121,19 +2418,41 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
         }
     }
 
+    {
+        char dst[PATH_MAX];
+        snprintf(dst, sizeof dst, "%s/images", oebps);
+        for (size_t k = 0; k < nused; k++)
+            copy_epub_image(bk, imgd, used[k], dst);
+        if (cover_file)
+            copy_epub_image(bk, imgd, cover_file, dst);
+    }
     snprintf(p, sizeof p, "%s/content.opf", oebps);
     FILE *opf = fopen(p, "w");
     fprintf(opf, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                  "<package version=\"3.0\" unique-identifier=\"uid\" "
                  "xmlns=\"http://www.idpf.org/2007/opf\">\n<metadata "
-                 "xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n"
-                 "<dc:identifier id=\"uid\">urn:uuid:%s</dc:identifier>\n",
-            bk->bookuuid ? bk->bookuuid : "pubcraft-book");
+                 "xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n");
+    {
+        char pub_uuid[64] = "";
+        fprintf(opf, "<dc:identifier id=\"uid\">");
+        if (bk->bookuuid && bk->bookuuid[0] && uuid_publication_value(bk->bookuuid, pub_uuid, sizeof pub_uuid)) {
+            fprintf(opf, "urn:uuid:");
+            fprint_esc(opf, pub_uuid);
+        } else if (bk->bookuuid && bk->bookuuid[0]) {
+            /* Identificatore legacy non-UUID: stabile, ma senza urn:uuid: */
+            fprint_esc(opf, bk->bookuuid);
+        } else {
+            fprint_esc(opf, "pubcraft-untitled");
+        }
+        fprintf(opf, "</dc:identifier>\n");
+    }
     fprintf(opf, "<dc:title>");
     fprint_esc(opf, bk->title ? bk->title : "Senza titolo");
     fprintf(opf, "</dc:title>\n<dc:creator>");
     fprint_esc(opf, bk->author ? bk->author : "");
-    fprintf(opf, "</dc:creator>\n<dc:language>%s</dc:language>\n", lang);
+    fprintf(opf, "</dc:creator>\n<dc:language>");
+    fprint_esc(opf, lang);
+    fprintf(opf, "</dc:language>\n");
     if (cover_file)
         fprintf(opf, "<meta name=\"cover\" content=\"cover\"/>\n");
     fprintf(opf, "<meta property=\"dcterms:modified\">2026-10-20T00:00:00Z</meta>\n"
@@ -2143,13 +2462,16 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
         fprintf(opf, "<item id=\"c%zu\" href=\"chap%03zu.xhtml\" media-type=\"application/xhtml+xml\"/>\n",
                 c + 1, c + 1);
     if (cover_file) {
-        fprintf(opf, "<item id=\"cover\" href=\"images/%s\" media-type=\"%s\" properties=\"cover-image\"/>\n",
-                cover_file, media_type_for(cover_file));
+        fprintf(opf, "<item id=\"cover\" href=\"images/");
+        fprint_esc(opf, cover_file);
+        fprintf(opf, "\" media-type=\"%s\" properties=\"cover-image\"/>\n",
+                media_type_for(cover_file));
     }
     for (size_t k = 0; k < nused; k++) {
         if (cover_file && !strcmp(used[k], cover_file)) continue;
-        fprintf(opf, "<item id=\"img%zu\" href=\"images/%s\" media-type=\"%s\"/>\n",
-                k, used[k], media_type_for(used[k]));
+        fprintf(opf, "<item id=\"img%zu\" href=\"images/", k);
+        fprint_esc(opf, used[k]);
+        fprintf(opf, "\" media-type=\"%s\"/>\n", media_type_for(used[k]));
     }
     fprintf(opf, "<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n</manifest>\n<spine>\n");
     for (size_t c = 0; c < bk->nch; c++) fprintf(opf, "<itemref idref=\"c%zu\"/>\n", c + 1);
@@ -2262,7 +2584,7 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
         }
     }
     const char *ffFamily = ffbuf;
-    const char *lang = (bk->language && bk->language[0]) ? bk->language : "it";
+    const char *lang = sanitize_lang(bk->language);
 
     /* CSS per interruzioni di scena */
     const char *sb_css =
@@ -2736,6 +3058,73 @@ static void clean_yaml_val(char *s) {
     }
 }
 
+static int yaml_needs_quotes(const char *s) {
+    if (!s || !*s) return 1;
+    if (isspace((unsigned char)s[0]) || isspace((unsigned char)s[strlen(s) - 1])) return 1;
+    char first = s[0];
+    if (first == '-' || first == '?' || first == ':' || first == ',' ||
+        first == '[' || first == ']' || first == '{' || first == '}' ||
+        first == '#' || first == '&' || first == '*' || first == '!' ||
+        first == '|' || first == '>' || first == '\'' || first == '"' ||
+        first == '%' || first == '@' || first == '`') return 1;
+    if (!strcasecmp(s, "true") || !strcasecmp(s, "false") ||
+        !strcasecmp(s, "yes") || !strcasecmp(s, "no") ||
+        !strcasecmp(s, "null") || !strcmp(s, "~")) return 1;
+    for (const char *p = s; *p; p++) {
+        if (*p == '\n' || *p == '\r' || *p == '\t' || *p == '"' || *p == '\\') return 1;
+        if (*p == '#' && (p > s && isspace((unsigned char)*(p - 1)))) return 1;
+        if (*p == ':' && (*(p + 1) == ' ' || *(p + 1) == '\t' || *(p + 1) == '\0')) return 1;
+    }
+    return 0;
+}
+
+static void fprint_yaml_scalar(FILE *f, const char *s) {
+    if (!s) s = "";
+    if (!yaml_needs_quotes(s)) {
+        fputs(s, f);
+        return;
+    }
+    fputc('"', f);
+    for (const char *p = s; *p; p++) {
+        switch (*p) {
+            case '"': fputs("\\\"", f); break;
+            case '\\': fputs("\\\\", f); break;
+            case '\n': fputs("\\n", f); break;
+            case '\r': fputs("\\r", f); break;
+            case '\t': fputs("\\t", f); break;
+            default: fputc(*p, f); break;
+        }
+    }
+    fputc('"', f);
+}
+
+/* Rappresentazione YAML di uno scalare in un buffer (stessa policy di
+ * fprint_yaml_scalar), usata per scrivere l'uuid senza trasformare un legacy
+ * letterale come "null" in un valore nullo. */
+static void yaml_scalar_to_buf(const char *s, char *out, size_t cap) {
+    if (!s) s = "";
+    if (!cap) return;
+    if (!yaml_needs_quotes(s)) {
+        snprintf(out, cap, "%s", s);
+        return;
+    }
+    size_t o = 0;
+    if (cap < 3) { out[0] = 0; return; }
+    out[o++] = '"';
+    for (const char *p = s; *p && o + 7 < cap; p++) {
+        switch (*p) {
+            case '"': out[o++] = '\\'; out[o++] = '"'; break;
+            case '\\': out[o++] = '\\'; out[o++] = '\\'; break;
+            case '\n': out[o++] = '\\'; out[o++] = 'n'; break;
+            case '\r': out[o++] = '\\'; out[o++] = 'r'; break;
+            case '\t': out[o++] = '\\'; out[o++] = 't'; break;
+            default: out[o++] = *p; break;
+        }
+    }
+    out[o++] = '"';
+    out[o] = 0;
+}
+
 /* ---- scrittura vault ---- */
 static int export_md(const char *archive_path, const char *vdir) {
     char *tmp = mk_tmpdir();
@@ -2753,26 +3142,36 @@ static int export_md(const char *archive_path, const char *vdir) {
     FILE *y = fopen(yml, "w");
     if (!y) die("fopen book.yaml");
     fprintf(y, "# PubCraft vault - apri questa cartella con Obsidian (Open folder as vault)\n");
-    fprintf(y, "title: %s\n", bk.title ? bk.title : "");
-    fprintf(y, "author: %s\n", bk.author ? bk.author : "");
-    fprintf(y, "language: it\n");
-    if (bk.bookuuid) fprintf(y, "uuid: %s\n", bk.bookuuid);
+    fprintf(y, "title: ");
+    fprint_yaml_scalar(y, bk.title ? bk.title : "");
+    fprintf(y, "\nauthor: ");
+    fprint_yaml_scalar(y, bk.author ? bk.author : "");
+    fprintf(y, "\nlanguage: it\n");
+    if (bk.bookuuid) {
+        fprintf(y, "uuid: ");
+        fprint_yaml_scalar(y, bk.bookuuid);
+        fprintf(y, "\n");
+    }
     fprintf(y, "chapters:\n");
     for (size_t i = 0; i < bk.nch; i++) {
         char slug[128];
         slugify(bk.chs[i].title ? bk.chs[i].title : "capitolo", slug, sizeof slug);
         char fn[160];
         snprintf(fn, sizeof fn, "%02zu-%s.md", i + 1, slug);
-        fprintf(y, "- file: %s\n", fn);
+        fprintf(y, "- file: ");
+        fprint_yaml_scalar(y, fn);
+        fprintf(y, "\n");
         fprintf(y, "  id: %s\n", bk.chs[i].id ? bk.chs[i].id : "");
-        fprintf(y, "  title: %s\n", bk.chs[i].title ? bk.chs[i].title : "");
+        fprintf(y, "  title: ");
+        fprint_yaml_scalar(y, bk.chs[i].title ? bk.chs[i].title : "");
+        fprintf(y, "\n");
         char mp[PATH_MAX];
         snprintf(mp, sizeof mp, "%s/%s", vdir, fn);
         FILE *f = fopen(mp, "w");
         if (!f) die("fopen md");
         fprintf(f, "---\n");
         if (bk.chs[i].id) fprintf(f, "id: %s\n", bk.chs[i].id);
-        if (bk.chs[i].title) fprintf(f, "title: %s\n", bk.chs[i].title);
+        if (bk.chs[i].title) { fprintf(f, "title: "); fprint_yaml_scalar(f, bk.chs[i].title); fprintf(f, "\n"); }
         fprintf(f, "---\n\n");
         for (size_t j = 0; j < bk.chs[i].nseg; j++) {
             Seg *s = &bk.chs[i].segs[j];
@@ -2812,6 +3211,705 @@ static int export_md(const char *archive_path, const char *vdir) {
     return rc;
 }
 
+/* Genera un UUID v4 persistente per il libro (formato "id....-....").
+ * Senza identificatore stabile ogni build produrrebbe urn:uuid diverso
+ * (prima: condiviso "pubcraft-book"), rompendo aggiornamenti e cataloghi. */
+#ifdef _WIN32
+/* CSPRNG di sistema (advapi32!SystemFunction036) caricato dinamicamente:
+ * nessuna dipendenza di link aggiuntiva per i pacchetti Windows. */
+typedef BOOLEAN (WINAPI *rtl_gen_random_fn)(PVOID, ULONG);
+static int win_random_bytes(unsigned char *buf, size_t n) {
+    if (!buf || n == 0 || n > 0xFFFFFFFFu) return 0;
+    HMODULE adv = LoadLibraryA("advapi32.dll");
+    if (!adv) return 0;
+    rtl_gen_random_fn fn = (rtl_gen_random_fn)(void *)GetProcAddress(adv, "SystemFunction036");
+    int ok = (fn != NULL && fn((PVOID)buf, (ULONG)n) != 0);
+    FreeLibrary(adv);
+    return ok;
+}
+#endif
+
+static void gen_book_uuid(char *out, size_t sz) {
+    unsigned char b[16];
+    size_t r = 0;
+#ifdef _WIN32
+    r = win_random_bytes(b, sizeof b) ? sizeof b : 0;
+#else
+    FILE *f = fopen("/dev/urandom", "rb");
+    r = f ? fread(b, 1, sizeof b, f) : 0;
+    if (f) fclose(f);
+#endif
+    if (r != sizeof b) {
+        /* Ultimo fallback (entropia debole) se il CSPRNG di sistema non è
+         * disponibile. Su Windows si usa SystemFunction036; questa suite non
+         * certifica l'esecuzione nativa Windows. */
+        unsigned long long seed = (unsigned long long)getpid() * 10000000001ULL
+            ^ (unsigned long long)time(NULL) * 1000003ULL ^ (unsigned long long)(uintptr_t)out;
+        for (int i = 0; i < 16; i++) {
+            seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            b[i] = (unsigned char)(seed >> 33);
+        }
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    /* UUID canonico, versione 4, variant RFC 4122 (niente prefisso "id"). */
+    snprintf(out, sz, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+}
+
+/* -------------------------------------------------------------------------
+ * Scansione strutturale minima di book.yaml per uuid.
+ *
+ * Riconosce la chiave semanticamente (plain, 'quotata', "quotata") e le forme
+ * di valore supportate: scalar su una riga (plain o quotato) e literal block
+ * con chomping strip ("|-"). Le altre forme (folded, |, |+, anchor/alias/tag,
+ * chiavi esplicite, mappe flow, plain multi-riga) vengono rifiutate PRIMA di
+ * qualsiasi scrittura. Stessa policy di scanUUIDDocument() in Go.
+ * ------------------------------------------------------------------------- */
+typedef struct { size_t start, cstart, cend, end; } CYLine;
+
+typedef struct {
+    int line_index;
+    size_t key_start;
+    size_t value_start, value_end; /* single-line */
+    int is_block;
+    int line_of_value;
+    char semantic[512];
+} UUIDEntry;
+
+typedef struct {
+    UUIDEntry *entries;
+    size_t nentries, cap;
+    char chosen[512];
+    int conflict;
+    int error;
+    char errmsg[256];
+    int flow_root;
+    int root_indent;
+    size_t insert_at;
+} UUIDScan;
+
+static void uuid_scan_free(UUIDScan *s) {
+    free(s->entries);
+    memset(s, 0, sizeof *s);
+}
+
+static int cy_split_lines(const char *d, size_t n, CYLine **out, size_t *count) {
+    size_t cap = n / 2 + 2;
+    CYLine *ls = malloc(cap * sizeof *ls);
+    if (!ls) return -1;
+    size_t i = 0, c = 0;
+    while (i < n) {
+        size_t start = i;
+        while (i < n && d[i] != '\n') i++;
+        size_t cend = i;
+        if (cend > start && d[cend - 1] == '\r') cend--;
+        size_t end = (i < n) ? i + 1 : i;
+        size_t cstart = start;
+        if (start == 0 && n >= 3 && (unsigned char)d[0] == 0xEF &&
+            (unsigned char)d[1] == 0xBB && (unsigned char)d[2] == 0xBF) cstart = 3;
+        if (c == cap) {
+            cap *= 2;
+            CYLine *nl = realloc(ls, cap * sizeof *nl);
+            if (!nl) { free(ls); return -1; }
+            ls = nl;
+        }
+        ls[c].start = start;
+        ls[c].cstart = cstart;
+        ls[c].cend = cend;
+        ls[c].end = end;
+        c++;
+        i = end;
+    }
+    *out = ls;
+    *count = c;
+    return 0;
+}
+
+static int cy_blank(const CYLine *l) { return l->cstart >= l->cend; }
+
+/* Spazi iniziali; -1 se trova un TAB prima del contenuto (indentazione YAML
+ * con tab non valida e non supportata). */
+static int cy_indent(const char *d, const CYLine *l) {
+    int n = 0;
+    for (size_t i = l->cstart; i < l->cend; i++) {
+        if (d[i] == ' ') n++;
+        else if (d[i] == '\t') return -1;
+        else break;
+    }
+    return n;
+}
+
+static void cy_trim(const char *d, const CYLine *l, size_t *ts, size_t *te) {
+    size_t s = l->cstart, e = l->cend;
+    while (s < e && (d[s] == ' ' || d[s] == '\t')) s++;
+    while (e > s && (d[e - 1] == ' ' || d[e - 1] == '\t')) e--;
+    *ts = s;
+    *te = e;
+}
+
+static void uuid_scan_error(UUIDScan *s, const char *msg) {
+    if (!s->error) {
+        s->error = 1;
+        snprintf(s->errmsg, sizeof s->errmsg, "%s", msg);
+    }
+}
+
+/* Copia una stringa quotata (incluse le virgolette) e la decodifica con
+ * clean_yaml_val. Restituisce l'offset dopo la virgoletta di chiusura. */
+static int cy_unquote_span(const char *d, size_t start, size_t end, size_t *after, char *out, size_t outsz) {
+    if (start >= end || (d[start] != '"' && d[start] != '\'')) return -1;
+    char q = d[start];
+    size_t j = start + 1, close = (size_t)-1;
+    while (j < end) {
+        if (q == '"' && d[j] == '\\' && j + 1 < end) { j += 2; continue; }
+        if (d[j] == q) {
+            if (q == '\'' && j + 1 < end && d[j + 1] == '\'') { j += 2; continue; }
+            close = j;
+            break;
+        }
+        j++;
+    }
+    if (close == (size_t)-1) return -1;
+    size_t len = close + 1 - start;
+    if (len >= outsz) return -1;
+    char *tmp = malloc(len + 1);
+    if (!tmp) return -1;
+    memcpy(tmp, d + start, len);
+    tmp[len] = 0;
+    clean_yaml_val(tmp);
+    snprintf(out, outsz, "%s", tmp);
+    free(tmp);
+    *after = close + 1;
+    return 0;
+}
+
+/* 1 = chiave uuid, 0 = altra chiave, -1 = forma non supportata. */
+static int parse_uuid_key(const char *d, const CYLine *l, int root_indent,
+                          size_t *key_start, size_t *after_colon, UUIDScan *s) {
+    size_t p = l->cstart + (size_t)root_indent;
+    if (p >= l->cend) return 0;
+    int had_prefix = 0;
+    if (d[p] == '*') {
+        uuid_scan_error(s, "uuid con chiave alias non supportato");
+        return -1;
+    }
+    if (d[p] == '&' || d[p] == '!') {
+        /* Salta l'anchor/tag: se la chiave sottostante è "uuid" la forma non
+         * è supportata; per le altre chiavi si prosegue normalmente. */
+        size_t q = p;
+        while (q < l->cend && d[q] != ' ' && d[q] != '\t' && d[q] != ':') q++;
+        while (q < l->cend && (d[q] == ' ' || d[q] == '\t')) q++;
+        if (q >= l->cend) return 0;
+        p = q;
+        had_prefix = 1;
+    }
+    if (d[p] == '?' && (p + 1 >= l->cend || d[p + 1] == ' ' || d[p + 1] == '\t')) {
+        size_t q = p + 1;
+        while (q < l->cend && (d[q] == ' ' || d[q] == '\t')) q++;
+        char key[256] = "";
+        size_t after = q;
+        if (q < l->cend && (d[q] == '"' || d[q] == '\'')) {
+            if (cy_unquote_span(d, q, l->cend, &after, key, sizeof key) != 0) return -1;
+        } else {
+            size_t e = q;
+            while (e < l->cend && d[e] != ' ' && d[e] != '\t' && d[e] != ':') e++;
+            size_t len = e - q;
+            if (len >= sizeof key) return -1;
+            memcpy(key, d + q, len);
+            key[len] = 0;
+        }
+        if (!strcmp(key, "uuid")) {
+            uuid_scan_error(s, "uuid con chiave esplicita '?' non supportato");
+            return -1;
+        }
+        return 0;
+    }
+    size_t ks = p, ke = p;
+    char key[256] = "";
+    if (d[p] == '"' || d[p] == '\'') {
+        size_t after = p;
+        if (cy_unquote_span(d, p, l->cend, &after, key, sizeof key) != 0) return -1;
+        ke = after;
+    } else {
+        while (ke < l->cend && d[ke] != ':' && d[ke] != ' ' && d[ke] != '\t') ke++;
+        size_t len = ke - ks;
+        if (len >= sizeof key) return -1;
+        memcpy(key, d + ks, len);
+        key[len] = 0;
+    }
+    size_t c = ke;
+    while (c < l->cend && (d[c] == ' ' || d[c] == '\t')) c++;
+    if (c >= l->cend || d[c] != ':') return 0;
+    if (!strcmp(key, "uuid") && had_prefix) {
+        uuid_scan_error(s, "uuid con chiave anchor/tag non supportato");
+        return -1;
+    }
+    *key_start = ks;
+    *after_colon = c + 1;
+    return !strcmp(key, "uuid") ? 1 : 0;
+}
+
+/* Analizza il valore della chiave uuid. Ritorna 0 su successo, -1 su forma
+ * non supportata. */
+static int parse_uuid_value(const char *d, CYLine *ls, size_t lc, size_t idx,
+                            size_t after_colon, int root_indent, UUIDEntry *e, UUIDScan *s) {
+    const CYLine *l = &ls[idx];
+    size_t vs = after_colon;
+    while (vs < l->cend && (d[vs] == ' ' || d[vs] == '\t')) vs++;
+    e->line_index = (int)idx;
+    e->line_of_value = (int)idx;
+    e->key_start = 0;
+    if (vs >= l->cend || d[vs] == '#') {
+        e->semantic[0] = 0;
+        e->value_start = vs;
+        e->value_end = vs;
+        return 0;
+    }
+    if (d[vs] == '*' || d[vs] == '&' || d[vs] == '!') {
+        uuid_scan_error(s, "uuid con valore alias/anchor/tag non supportato");
+        return -1;
+    }
+    if (d[vs] == '{' || d[vs] == '[' || d[vs] == '}' || d[vs] == ']') {
+        uuid_scan_error(s, "uuid deve essere uno scalare YAML");
+        return -1;
+    }
+    if (d[vs] == '"' || d[vs] == '\'') {
+        size_t after = vs;
+        if (cy_unquote_span(d, vs, l->cend, &after, e->semantic, sizeof e->semantic) != 0) {
+            uuid_scan_error(s, "uuid con stringa quotata su più righe non supportato");
+            return -1;
+        }
+        e->value_start = vs;
+        e->value_end = after;
+        e->is_block = 0;
+        return 0;
+    }
+    if (d[vs] == '>' ) {
+        uuid_scan_error(s, "uuid con block scalar folded '>' non supportato");
+        return -1;
+    }
+    if (d[vs] == '|') {
+        size_t i = vs + 1;
+        int strip = 0, plus = 0, digit = 0;
+        while (i < l->cend) {
+            char c = d[i];
+            if (c == '-') strip = 1;
+            else if (c == '+') plus = 1;
+            else if (c >= '1' && c <= '9') digit = c - '0';
+            else break;
+            i++;
+        }
+        if (!strip || plus) {
+            uuid_scan_error(s, "uuid con block scalar diverso da '|-' non supportato");
+            return -1;
+        }
+        while (i < l->cend && (d[i] == ' ' || d[i] == '\t')) i++;
+        if (i < l->cend && d[i] != '#') {
+            uuid_scan_error(s, "uuid con block scalar non valido");
+            return -1;
+        }
+        int content_indent = 0;
+        if (digit > 0) {
+            content_indent = root_indent + digit;
+        } else {
+            for (size_t j = idx + 1; j < lc; j++) {
+                if (cy_blank(&ls[j])) continue;
+                int ind = cy_indent(d, &ls[j]);
+                if (ind < 0) { uuid_scan_error(s, "indentazione con tab non supportata"); return -1; }
+                if (ind > root_indent) content_indent = ind;
+                break;
+            }
+        }
+        if (content_indent <= root_indent) {
+            e->semantic[0] = 0;
+            e->value_start = vs;
+            e->is_block = 1;
+            return 0;
+        }
+        size_t out = 0;
+        int started = 0;
+        for (size_t j = idx + 1; j < lc; j++) {
+            if (cy_blank(&ls[j])) {
+                if (started && out + 1 < sizeof e->semantic) e->semantic[out++] = '\n';
+                continue;
+            }
+            int ind = cy_indent(d, &ls[j]);
+            if (ind < 0) { uuid_scan_error(s, "indentazione con tab non supportata"); return -1; }
+            if (ind <= root_indent) break;
+            if (ind < content_indent) {
+                uuid_scan_error(s, "uuid con block scalar indentato in modo incoerente");
+                return -1;
+            }
+            size_t cs = ls[j].cstart + (size_t)content_indent;
+            if (cs > ls[j].cend) cs = ls[j].cend;
+            size_t len = ls[j].cend - cs;
+            if (out + len + 2 >= sizeof e->semantic) {
+                uuid_scan_error(s, "uuid block scalar troppo lungo");
+                return -1;
+            }
+            if (started) e->semantic[out++] = '\n';
+            memcpy(e->semantic + out, d + cs, len);
+            out += len;
+            started = 1;
+        }
+        while (out > 0 && e->semantic[out - 1] == '\n') out--;
+        e->semantic[out] = 0;
+        e->value_start = vs;
+        e->is_block = 1;
+        return 0;
+    }
+
+    /* plain scalar su una riga */
+    size_t ve = l->cend;
+    for (size_t j = vs; j < l->cend; j++) {
+        if (d[j] == '#' && (j == vs || d[j - 1] == ' ' || d[j - 1] == '\t')) {
+            ve = j;
+            break;
+        }
+    }
+    while (ve > vs && (d[ve - 1] == ' ' || d[ve - 1] == '\t')) ve--;
+    /* Una continuazione indentata renderebbe il valore plain multi-riga:
+     * forma non supportata (la semantica sarebbe diversa dal testo locale). */
+    for (size_t j = idx + 1; j < lc; j++) {
+        if (cy_blank(&ls[j])) continue;
+        int ind = cy_indent(d, &ls[j]);
+        if (ind < 0) { uuid_scan_error(s, "indentazione con tab non supportata"); return -1; }
+        if (ind > root_indent) {
+            uuid_scan_error(s, "uuid con valore plain su più righe non supportato: usa una singola riga");
+            return -1;
+        }
+        break;
+    }
+    size_t len = ve - vs;
+    if (len >= sizeof e->semantic) {
+        uuid_scan_error(s, "uuid troppo lungo");
+        return -1;
+    }
+    memcpy(e->semantic, d + vs, len);
+    e->semantic[len] = 0;
+    /* Plain null/~ non sono identificatori (YAML !!null), come in Go. */
+    if (!strcasecmp(e->semantic, "null") || !strcmp(e->semantic, "~")) e->semantic[0] = 0;
+    e->value_start = vs;
+    e->value_end = ve;
+    e->is_block = 0;
+    return 0;
+}
+
+static void uuid_scan_append(UUIDScan *s, const UUIDEntry *e) {
+    if (s->nentries == s->cap) {
+        size_t nc = s->cap ? s->cap * 2 : 4;
+        UUIDEntry *ne = realloc(s->entries, nc * sizeof *ne);
+        if (!ne) { uuid_scan_error(s, "memoria esaurita"); return; }
+        s->entries = ne;
+        s->cap = nc;
+    }
+    s->entries[s->nentries++] = *e;
+}
+
+/* 0 = successo (anche se nessuna chiave), -1 = errore/forma non supportata. */
+static int uuid_scan(const char *d, size_t n, UUIDScan *s) {
+    memset(s, 0, sizeof *s);
+    s->insert_at = (size_t)-1;
+    CYLine *ls = NULL;
+    size_t lc = 0;
+    if (cy_split_lines(d, n, &ls, &lc) != 0) {
+        snprintf(s->errmsg, sizeof s->errmsg, "memoria esaurita");
+        s->error = 1;
+        return -1;
+    }
+
+    size_t first = (size_t)-1;
+    for (size_t i = 0; i < lc; i++) {
+        size_t ts, te;
+        cy_trim(d, &ls[i], &ts, &te);
+        if (ts == te || d[ts] == '#') continue;
+        if (te - ts == 3 && !memcmp(d + ts, "---", 3)) continue;
+        first = i;
+        break;
+    }
+    if (first == (size_t)-1) {
+        free(ls);
+        return 0;
+    }
+    {
+        size_t ts, te;
+        cy_trim(d, &ls[first], &ts, &te);
+        if (d[ts] == '{' || d[ts] == '[') {
+            s->flow_root = 1;
+            snprintf(s->errmsg, sizeof s->errmsg,
+                     "book.yaml con mappa flow non supportata per uuid: usa la forma a blocchi");
+            s->error = 1;
+            free(ls);
+            return -1;
+        }
+        int ind = cy_indent(d, &ls[first]);
+        if (ind < 0) {
+            snprintf(s->errmsg, sizeof s->errmsg, "indentazione con tab non supportata");
+            s->error = 1;
+            free(ls);
+            return -1;
+        }
+        s->root_indent = ind;
+    }
+
+    int seen_key = 0;
+    for (size_t i = first; i < lc; i++) {
+        size_t ts, te;
+        cy_trim(d, &ls[i], &ts, &te);
+        if (ts == te || d[ts] == '#') continue;
+        if (te - ts == 3 && !memcmp(d + ts, "---", 3)) {
+            if (seen_key) {
+                uuid_scan_error(s, "book.yaml deve contenere un solo documento YAML");
+                free(ls);
+                return -1;
+            }
+            continue;
+        }
+        if (te - ts == 3 && !memcmp(d + ts, "...", 3) && ts == ls[i].cstart) {
+            s->insert_at = ls[i].start;
+            for (size_t j = i + 1; j < lc; j++) {
+                size_t xs, xe;
+                cy_trim(d, &ls[j], &xs, &xe);
+                if (xs != xe && d[xs] != '#') {
+                    uuid_scan_error(s, "book.yaml deve contenere un solo documento YAML");
+                    free(ls);
+                    return -1;
+                }
+            }
+            break;
+        }
+        int ind = cy_indent(d, &ls[i]);
+        if (ind < 0) {
+            uuid_scan_error(s, "indentazione con tab non supportata");
+            free(ls);
+            return -1;
+        }
+        if (ind != s->root_indent) continue;
+        seen_key = 1;
+        size_t key_start = 0, after_colon = 0;
+        int is_uuid = parse_uuid_key(d, &ls[i], s->root_indent, &key_start, &after_colon, s);
+        if (is_uuid < 0) { free(ls); return -1; }
+        if (is_uuid == 0) continue;
+        UUIDEntry e;
+        memset(&e, 0, sizeof e);
+        if (parse_uuid_value(d, ls, lc, i, after_colon, s->root_indent, &e, s) != 0) {
+            free(ls);
+            return -1;
+        }
+        e.key_start = key_start;
+        uuid_scan_append(s, &e);
+        if (s->error) { free(ls); return -1; }
+        if (e.semantic[0]) {
+            if (!s->chosen[0]) snprintf(s->chosen, sizeof s->chosen, "%s", e.semantic);
+            else if (strcmp(s->chosen, e.semantic) != 0) s->conflict = 1;
+        }
+    }
+    free(ls);
+    if (s->conflict) {
+        s->error = 1;
+        snprintf(s->errmsg, sizeof s->errmsg, "book.yaml contiene identificatori uuid in conflitto");
+        return -1;
+    }
+    if (s->nentries == 0 && s->flow_root) {
+        s->error = 1;
+        snprintf(s->errmsg, sizeof s->errmsg, "impossibile aggiungere uuid a una mappa flow");
+        return -1;
+    }
+    return 0;
+}
+
+/* Verifica il buffer riscritto con lo stesso scanner: una sola chiave uuid con
+ * il valore atteso. Se fallisce, il chiamante non deve scrivere. */
+static int uuid_verify(const char *d, size_t n, const char *target) {
+    UUIDScan vs;
+    if (uuid_scan(d, n, &vs) != 0) { uuid_scan_free(&vs); return -1; }
+    int ok = (vs.nentries == 1 && !strcmp(vs.entries[0].semantic, target));
+    uuid_scan_free(&vs);
+    return ok ? 0 : -1;
+}
+
+/* Assicura un uuid stabile in book.yaml PRIMA della build.
+ * Vedi la policy Go: modifica solo lo span del valore, preserva commenti e
+ * struttura, è idempotente e rifiuta le forme non supportate senza scrivere. */
+static int ensure_book_uuid(const char *vdir, Book *bk) {
+    char yml[PATH_MAX];
+    snprintf(yml, sizeof yml, "%s/book.yaml", vdir);
+    size_t yl = 0;
+    char *yb = (char *)read_file(yml, &yl);
+    if (!yb) {
+        fprintf(stderr, "errore: impossibile leggere %s per l'uuid\n", yml);
+        return -1;
+    }
+    UUIDScan sc;
+    if (uuid_scan(yb, yl, &sc) != 0) {
+        fprintf(stderr, "errore: %s (book.yaml non modificato)\n", sc.errmsg);
+        uuid_scan_free(&sc);
+        free(yb);
+        return -1;
+    }
+
+    char target[600] = "";
+    if (bk->bookuuid && bk->bookuuid[0]) snprintf(target, sizeof target, "%s", bk->bookuuid);
+    if (!target[0]) snprintf(target, sizeof target, "%s", sc.chosen);
+    if (!target[0]) {
+        char id[64];
+        gen_book_uuid(id, sizeof id);
+        snprintf(target, sizeof target, "%s", id);
+    }
+
+    int need_write = 0;
+    int keep_value = 0; /* 1 = riscrivi lo span del primo valore */
+    if (sc.nentries == 0) {
+        need_write = 1;
+    } else {
+        for (size_t i = 1; i < sc.nentries; i++) {
+            UUIDEntry *e = &sc.entries[i];
+            if (e->is_block || e->line_index != e->line_of_value) {
+                fprintf(stderr, "errore: uuid duplicato in forma non supportata: correggi manualmente book.yaml\n");
+                uuid_scan_free(&sc);
+                free(yb);
+                return -1;
+            }
+        }
+        UUIDEntry *k = &sc.entries[0];
+        if (strcmp(k->semantic, target) != 0) {
+            if (k->is_block) {
+                fprintf(stderr, "errore: uuid in block scalar non aggiornabile automaticamente: riscrivi il valore su una riga\n");
+                uuid_scan_free(&sc);
+                free(yb);
+                return -1;
+            }
+            need_write = 1;
+            keep_value = 1;
+        } else if (sc.nentries > 1) {
+            need_write = 1;
+        }
+    }
+    if (!need_write) {
+        free(bk->bookuuid);
+        bk->bookuuid = dupstr(target);
+        uuid_scan_free(&sc);
+        free(yb);
+        return 0;
+    }
+
+    int crlf = 0;
+    for (size_t i = 0; i + 1 < yl; i++) {
+        if (yb[i] == '\r' && yb[i + 1] == '\n') { crlf = 1; break; }
+    }
+    const char *eol = crlf ? "\r\n" : "\n";
+    char rendered[700];
+    yaml_scalar_to_buf(target, rendered, sizeof rendered);
+    size_t cap = yl + strlen(rendered) + 128;
+    char *out = malloc(cap);
+    if (!out) {
+        fprintf(stderr, "errore: memoria esaurita per aggiornare l'uuid\n");
+        uuid_scan_free(&sc);
+        free(yb);
+        return -1;
+    }
+    CYLine *ls = NULL;
+    size_t lc = 0;
+    if (cy_split_lines(yb, yl, &ls, &lc) != 0) {
+        free(out); uuid_scan_free(&sc); free(yb);
+        fprintf(stderr, "errore: memoria esaurita per aggiornare l'uuid\n");
+        return -1;
+    }
+    size_t o = 0;
+    int inserted = 0;
+    UUIDEntry *keep = sc.nentries ? &sc.entries[0] : NULL;
+    for (size_t i = 0; i < lc; i++) {
+        int skip = 0;
+        for (size_t k = 1; k < sc.nentries; k++) {
+            if ((size_t)sc.entries[k].line_index == i) { skip = 1; break; }
+        }
+        if (skip) continue;
+        if (sc.nentries == 0 && sc.insert_at == ls[i].start) {
+            for (int t = 0; t < sc.root_indent; t++) out[o++] = ' ';
+            memcpy(out + o, "uuid: ", 6); o += 6;
+            size_t tl = strlen(rendered);
+            memcpy(out + o, rendered, tl); o += tl;
+            size_t el = strlen(eol);
+            memcpy(out + o, eol, el); o += el;
+            inserted = 1;
+        }
+        if (keep && keep_value && (size_t)keep->line_index == i) {
+            memcpy(out + o, yb + ls[i].start, keep->value_start - ls[i].start);
+            o += keep->value_start - ls[i].start;
+            if (o > 0 && out[o - 1] != ' ' && out[o - 1] != '\t') out[o++] = ' ';
+            size_t tl = strlen(rendered);
+            memcpy(out + o, rendered, tl); o += tl;
+            if (keep->value_end < ls[i].cend && yb[keep->value_end] == '#') out[o++] = ' ';
+            memcpy(out + o, yb + keep->value_end, ls[i].end - keep->value_end);
+            o += ls[i].end - keep->value_end;
+            continue;
+        }
+        memcpy(out + o, yb + ls[i].start, ls[i].end - ls[i].start);
+        o += ls[i].end - ls[i].start;
+    }
+    if (sc.nentries == 0 && !inserted) {
+        size_t el = strlen(eol);
+        if (o > 0 && out[o - 1] != '\n') { memcpy(out + o, eol, el); o += el; }
+        for (int t = 0; t < sc.root_indent; t++) out[o++] = ' ';
+        memcpy(out + o, "uuid: ", 6); o += 6;
+        size_t tl = strlen(rendered);
+        memcpy(out + o, rendered, tl); o += tl;
+        memcpy(out + o, eol, el); o += el;
+    }
+    free(ls);
+
+    if (uuid_verify(out, o, target) != 0) {
+        fprintf(stderr, "errore: verifica uuid fallita dopo la riscrittura; book.yaml non modificato\n");
+        free(out); uuid_scan_free(&sc); free(yb);
+        return -1;
+    }
+
+    struct stat st;
+    mode_t mode = 0644;
+    if (stat(yml, &st) == 0) mode = st.st_mode & 0777;
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof tmp, "%s.pubcraft-uuid-%ld", yml, (long)getpid());
+    FILE *f = fopen(tmp, "wb");
+    if (!f) {
+        fprintf(stderr, "errore: impossibile scrivere l'uuid in %s: %s\n", yml, strerror(errno));
+        free(out); uuid_scan_free(&sc); free(yb);
+        return -1;
+    }
+    int werr = (fwrite(out, 1, o, f) != o);
+    if (fclose(f) != 0) werr = 1;
+    if (werr) {
+        unlink(tmp);
+        fprintf(stderr, "errore: scrittura incompleta dell'uuid in %s\n", yml);
+        free(out); uuid_scan_free(&sc); free(yb);
+        return -1;
+    }
+#ifdef _WIN32
+    (void)mode;
+    if (!MoveFileExA(tmp, yml, MOVEFILE_REPLACE_EXISTING)) {
+        unlink(tmp);
+        fprintf(stderr, "errore: sostituzione uuid in %s fallita\n", yml);
+        free(out); uuid_scan_free(&sc); free(yb);
+        return -1;
+    }
+#else
+    chmod(tmp, mode);
+    if (rename(tmp, yml) != 0) {
+        unlink(tmp);
+        fprintf(stderr, "errore: rename uuid in %s: %s\n", yml, strerror(errno));
+        free(out); uuid_scan_free(&sc); free(yb);
+        return -1;
+    }
+#endif
+    free(bk->bookuuid);
+    bk->bookuuid = dupstr(target);
+    free(out);
+    uuid_scan_free(&sc);
+    free(yb);
+    return 0;
+}
+
 /* ---- lettura vault ---- */
 typedef struct { char *file, *id, *title, *type; } ChEntry;
 static int load_vault(const char *vdir, Book *bk) {
@@ -2822,6 +3920,23 @@ static int load_vault(const char *vdir, Book *bk) {
     size_t n = 0;
     char *xy = (char *)read_file(yml, &n);
     if (!xy) { fprintf(stderr, "errore: %s assente (non e' un vault)\n", yml); return -1; }
+    normalize_text_buffer(xy, &n);
+    {
+        /* Lettura strutturale dell'uuid: gestisce chiavi quotate e block
+         * scalar "|-" con la stessa semantica del Go. Le forme non supportate
+         * vengono segnalate e lasciate a ensure_book_uuid, che rifiuterà la
+         * build senza modificare il file. */
+        UUIDScan us;
+        if (uuid_scan(xy, n, &us) == 0) {
+            free(bk->bookuuid);
+            bk->bookuuid = dupstr(us.chosen);
+        } else {
+            fprintf(stderr, "avviso: %s\n", us.errmsg);
+            free(bk->bookuuid);
+            bk->bookuuid = dupstr("");
+        }
+        uuid_scan_free(&us);
+    }
     ChEntry *ents = NULL;
     size_t nen = 0, capen = 0;
     ChEntry *cur_e = NULL;
@@ -2899,11 +4014,6 @@ static int load_vault(const char *vdir, Book *bk) {
             clean_yaml_val(v);
             free(bk->language);
             bk->language = dupstr(v);
-        } else if (!in_ch && !strncmp(l, "uuid:", 5)) {
-            char *v = l + 5;
-            clean_yaml_val(v);
-            free(bk->bookuuid);
-            bk->bookuuid = dupstr(v);
         } else if (!in_ch && !strncmp(l, "cover:", 6)) {
             char *v = l + 6;
             clean_yaml_val(v);
@@ -2949,6 +4059,27 @@ static int load_vault(const char *vdir, Book *bk) {
         line = strtok(NULL, "\n");
     }
     for (size_t i = 0; i < nen; i++) {
+        if (!is_safe_chapter_file(ents[i].file)) {
+            fprintf(stderr, "errore fatale: capitolo con percorso non consentito: '%s'\n"
+                            "  (deve essere un nome file .md nella cartella del libro)\n",
+                    ents[i].file ? ents[i].file : "(vuoto)");
+            for (size_t k = 0; k < nen; k++) {
+                free(ents[k].file); free(ents[k].id); free(ents[k].title); free(ents[k].type);
+            }
+            free(ents);
+            free(xy);
+            return 1;
+        }
+        if (vault_contains(vdir, ents[i].file) != 0) {
+            fprintf(stderr, "errore fatale: capitolo '%s' fuori dal vault (symlink non consentito)\n",
+                    ents[i].file);
+            for (size_t k = 0; k < nen; k++) {
+                free(ents[k].file); free(ents[k].id); free(ents[k].title); free(ents[k].type);
+            }
+            free(ents);
+            free(xy);
+            return 1;
+        }
         char mp[PATH_MAX];
         snprintf(mp, sizeof mp, "%s/%s", vdir, ents[i].file);
         size_t mn = 0;
@@ -2962,6 +4093,7 @@ static int load_vault(const char *vdir, Book *bk) {
             free(xy);
             return 1;
         }
+        normalize_text_buffer(md, &mn);
         char *fmid = NULL, *fmtitle = NULL, *fmtype = NULL;
         char *body = md;
         if (!strncmp(md, "---", 3)) {
@@ -3006,6 +4138,9 @@ static int load_vault(const char *vdir, Book *bk) {
         /* corpo: sottotitoli, immagini, liste, citazioni, scene break, paragrafi */
         char *para = NULL;
         size_t plen = 0, plcap = 0;
+        int prev_blank = 1;
+        ListIndent list_indent;
+        list_indent_reset(&list_indent);
 #define FLUSH_PARA() do { \
     if (plen) { \
         while (plen && (para[plen-1] == ' ' || para[plen-1] == '\t' || para[plen-1] == '\r' || para[plen-1] == '\n')) para[--plen] = 0; \
@@ -3022,10 +4157,15 @@ static int load_vault(const char *vdir, Book *bk) {
             while (e2 > t && (e2[-1] == ' ' || e2[-1] == '\t' || e2[-1] == '\r')) e2--;
             *e2 = 0;
             int has_next = (e != NULL);
-            if (!t[0]) { FLUSH_PARA(); if (!has_next) break; lp = e + 1; continue; }
+            if (!t[0]) { FLUSH_PARA(); prev_blank = 1; list_indent_reset(&list_indent); if (!has_next) break; lp = e + 1; continue; }
+            /* Conserva l'informazione "la riga precedente era vuota": una
+             * continuazione lazy vale solo se non c'è stata separazione. */
+            int was_blank = prev_blank;
+            prev_blank = 0;
             if (t[0] == '\\' && (t[1] == '#' || t[1] == '!')) t++; /* unescape writer */
             if (!strncmp(t, "```", 3)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 char *code = NULL;
                 size_t clen = 0, ccap = 0;
                 int nlines = 0;
@@ -3060,6 +4200,7 @@ static int load_vault(const char *vdir, Book *bk) {
                 continue;
             } else if (has_next && strchr(t, '|') != NULL && is_table_start(t, e + 1)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 char *table_buf = NULL;
                 size_t t_len = 0, t_cap = 0;
                 size_t tl = strlen(t);
@@ -3112,21 +4253,26 @@ static int load_vault(const char *vdir, Book *bk) {
                 continue;
             } else if (is_scene_break(t)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 chap_add_seg(c, SEG_SCENE_BREAK, t, NULL, NULL);
             } else if (!strncmp(t, "#### ", 5)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 chap_add_seg(c, SEG_H4, t + 5, NULL, NULL);
             } else if (!strncmp(t, "### ", 4)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 chap_add_seg(c, SEG_H3, t + 4, NULL, NULL);
             } else if (!strncmp(t, "## ", 3)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 chap_add_seg(c, SEG_SUBHEAD, t + 3, NULL, NULL);
             } else if (!strncmp(t, "# ", 2)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 const char *h1_title = t + 2;
                 while (*h1_title == ' ' || *h1_title == '\t') h1_title++;
-                if (c->nseg == 0 && (!c->title || !strcmp(c->title, "Senza titolo") || !strcasecmp(c->title, h1_title))) {
+                if (c->nseg == 0) {
                     free(c->title);
                     c->title = dupstr(h1_title);
                 } else {
@@ -3134,6 +4280,7 @@ static int load_vault(const char *vdir, Book *bk) {
                 }
             } else if (!strncmp(t, ">", 1)) {
                 FLUSH_PARA();
+                list_indent_reset(&list_indent);
                 const char *qp = t + 1;
                 if (*qp == ' ') qp++;
                 chap_add_seg(c, SEG_BLOCKQUOTE, qp, NULL, NULL);
@@ -3145,20 +4292,22 @@ static int load_vault(const char *vdir, Book *bk) {
                     if (*ip == '\t') indent += 2;
                     else indent++;
                 }
-                int level = indent >= 2 ? (indent / 2) : 0;
-                if (level > 8) level = 8;
+                int level = 0;
                 if ((lt[0] == '-' || lt[0] == '*' || lt[0] == '+') && lt[1] == ' ') {
                     FLUSH_PARA();
+                    level = list_indent_level(&list_indent, indent);
                     chap_add_seg_full(c, SEG_UL_ITEM, lt + 2, NULL, NULL, 0, level);
                 } else if (isdigit((unsigned char)lt[0])) {
                     const char *dp = lt;
                     long start_num = strtol(lt, (char**)&dp, 10);
                     if (*dp == '.' && dp[1] == ' ') {
                         FLUSH_PARA();
+                        level = list_indent_level(&list_indent, indent);
                         chap_add_seg_full(c, SEG_OL_ITEM, dp + 2, NULL, NULL, (int)start_num, level);
                     } else goto text_para;
                 } else if (!strncmp(t, "![", 2)) {
                     FLUSH_PARA();
+                    list_indent_reset(&list_indent);
                     char *cb = strchr(t, ']');
                     char *op = cb ? strchr(cb, '(') : NULL;
                     char *cl = op ? strchr(op, ')') : NULL;
@@ -3166,25 +4315,49 @@ static int load_vault(const char *vdir, Book *bk) {
                         *cb = 0; *cl = 0;
                         const char *cap = t + 2;
                         const char *src = op + 1;
-                        const char *bn = strrchr(src, '/');
-                        bn = bn ? bn + 1 : src;
-                        char full[PATH_MAX];
-                        snprintf(full, sizeof full, "%s/%s", vdir, src);
-                        if (access(full, R_OK) != 0)
-                            fprintf(stderr, "avviso: immagine %s non trovata\n", full);
-                        else
-                            chap_add_seg(c, SEG_IMAGE, bn, NULL, cap[0] ? cap : NULL);
+                        /* niente fughe dal vault né URL/percorsi assoluti */
+                        if (src[0] == '/' || src[0] == '\\' || strstr(src, "..") ||
+                            strchr(src, '\\') || strchr(src, ':')) {
+                            fprintf(stderr, "avviso: riferimento immagine non consentito: %s\n", src);
+                        } else {
+                            const char *rel = src;
+                            if (!strncmp(rel, "images/", 7)) rel += 7;
+                            else if (!strncmp(rel, "./", 2)) rel += 2;
+                            char full[PATH_MAX];
+                            snprintf(full, sizeof full, "%s/%s", vdir, src);
+                            if (access(full, R_OK) != 0 || vault_contains(vdir, src) != 0)
+                                fprintf(stderr, "avviso: immagine %s non trovata\n", full);
+                            else
+                                chap_add_seg(c, SEG_IMAGE, rel, NULL, cap[0] ? cap : NULL);
+                        }
                     }
                 } else {
                 text_para: ;
                     size_t L = strlen(t);
-                    if (plen + L + 2 > plcap) {
-                        plcap = plen + L + 64;
-                        para = realloc(para, plcap);
+                    int merged = 0;
+                    if (!plen && !was_blank && c->nseg > 0) {
+                        Seg *ls = &c->segs[c->nseg - 1];
+                        if ((ls->type == SEG_UL_ITEM || ls->type == SEG_OL_ITEM) && ls->text) {
+                            size_t oldL = strlen(ls->text);
+                            char *nt = realloc(ls->text, oldL + L + 2);
+                            if (nt) {
+                                nt[oldL] = ' ';
+                                memcpy(nt + oldL + 1, t, L + 1);
+                                ls->text = nt;
+                                merged = 1;
+                            }
+                        }
                     }
-                    if (plen) { para[plen++] = '\n'; }
-                    memcpy(para + plen, t, L);
-                    plen += L; para[plen] = 0;
+                    if (!merged) {
+                        list_indent_reset(&list_indent);
+                        if (plen + L + 2 > plcap) {
+                            plcap = plen + L + 64;
+                            para = realloc(para, plcap);
+                        }
+                        if (plen) { para[plen++] = '\n'; }
+                        memcpy(para + plen, t, L);
+                        plen += L; para[plen] = 0;
+                    }
                 }
             }
             if (!has_next) break;
@@ -3235,6 +4408,21 @@ static int cmd_info_vault(const char *vdir) {
 static int cmd_init(const char *vdir, const char *title) {
     char tdir[PATH_MAX];
     snprintf(tdir, sizeof tdir, "%s", vdir);
+
+    char yml[PATH_MAX];
+    snprintf(yml, sizeof yml, "%s/book.yaml", tdir);
+    if (access(yml, F_OK) == 0) {
+        fprintf(stderr, "errore: %s esiste gia'\n", yml);
+        return 1;
+    }
+
+    char ch1[PATH_MAX];
+    snprintf(ch1, sizeof ch1, "%s/01-capitolo-1.md", tdir);
+    if (access(ch1, F_OK) == 0) {
+        fprintf(stderr, "errore: %s esiste gia'\n", ch1);
+        return 1;
+    }
+
     mkdir_p(tdir);
 
     char cov[PATH_MAX], img[PATH_MAX];
@@ -3245,32 +4433,26 @@ static int cmd_init(const char *vdir, const char *title) {
 
     const char *btitle = (title && title[0]) ? title : "Nuovo Libro";
 
-    char yml[PATH_MAX];
-    snprintf(yml, sizeof yml, "%s/book.yaml", tdir);
-    if (access(yml, F_OK) == 0) {
-        fprintf(stderr, "errore: %s esiste gia'\n", yml);
-        return 1;
-    }
     FILE *fy = fopen(yml, "w");
     if (!fy) { perror("fopen book.yaml"); return 1; }
     fprintf(fy, "# PubCraft vault\n"
-                "title: %s\n"
+                "title: ");
+    fprint_yaml_scalar(fy, btitle);
+    fprintf(fy, "\n"
                 "author: Autore\n"
                 "language: it\n"
                 "style: classic\n"
                 "opening: dropcap\n"
                 "chapters:\n"
                 "- file: 01-capitolo-1.md\n"
-                "  title: Capitolo 1\n", btitle);
+                "  title: Capitolo 1\n");
     fclose(fy);
 
-    char ch1[PATH_MAX];
-    snprintf(ch1, sizeof ch1, "%s/01-capitolo-1.md", tdir);
     FILE *fc = fopen(ch1, "w");
-    if (fc) {
-        fprintf(fc, "---\ntitle: Capitolo 1\n---\n\nInizia a scrivere qui il tuo libro...\n");
-        fclose(fc);
-    }
+    if (!fc) { perror("fopen 01-capitolo-1.md"); return 1; }
+    fprintf(fc, "---\ntitle: Capitolo 1\n---\n\nInizia a scrivere qui il tuo libro...\n");
+    fclose(fc);
+
     printf("Nuovo progetto PubCraft creato in %s/\n", tdir);
     return 0;
 }
@@ -3332,6 +4514,7 @@ static int parse_print_opts(int argc, char **argv, int start,
 static int build_epub(const char *vdir, const char *outepub, int kindle) {
     Book bk;
     if (load_vault(vdir, &bk) != 0) return 1;
+    if (ensure_book_uuid(vdir, &bk) != 0) return 1;
     char imgd[PATH_MAX];
     pc_tmp_dir(imgd, sizeof imgd, "pubcraft-vi");
     copy_vault_images(vdir, imgd);
@@ -3349,6 +4532,7 @@ static int build_print(const char *vdir, const char *outdir,
                        double tw, double th, int pages, int bleed, int want_pdf) {
     Book bk;
     if (load_vault(vdir, &bk) != 0) return 1;
+    if (ensure_book_uuid(vdir, &bk) != 0) return 1;
     char imgd[PATH_MAX];
     snprintf(imgd, sizeof imgd, "%s/images", outdir);
     copy_vault_images(vdir, imgd);

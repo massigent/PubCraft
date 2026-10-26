@@ -268,14 +268,14 @@ func getQuickDirs(wsDir string) map[string]string {
 }
 
 func scanWorkspaceBooks(wsDir string) []RecentProject {
+	books := []RecentProject{}
 	if wsDir == "" {
-		return nil
+		return books
 	}
 	entries, err := os.ReadDir(wsDir)
 	if err != nil {
-		return nil
+		return books
 	}
-	var books []RecentProject
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -330,7 +330,7 @@ func scanWorkspaceBooks(wsDir string) []RecentProject {
 
 func apiRecents(w http.ResponseWriter, r *http.Request) {
 	cfg := loadUserConfig()
-	var recents []RecentProject
+	recents := []RecentProject{}
 	for _, item := range cfg.Recents {
 		item.Exists = fileExists(filepath.Join(item.Path, "book.yaml"))
 		recents = append(recents, item)
@@ -480,6 +480,9 @@ func apiRecentCover(w http.ResponseWriter, r *http.Request) {
 }
 
 func apiCloseBook(w http.ResponseWriter, r *http.Request) {
+	if !requireNoDirtyClient(w) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Metodo non consentito", http.StatusMethodNotAllowed)
 		return

@@ -44,7 +44,7 @@ func RunMCPServer() {
 	if inst != nil {
 		fmt.Fprintf(os.Stderr, "PubCraft MCP bridge collegato alla GUI attiva su %s (PID %d)\n", inst.URL, inst.PID)
 	} else {
-		fmt.Fprintf(os.Stderr, "PubCraft MCP server avviato su stdio (v1.0.0-alpha.1, %s/%s)\n", runtime.GOOS, runtime.GOARCH)
+		fmt.Fprintf(os.Stderr, "PubCraft MCP server avviato su stdio (v%s, %s/%s)\n", appVersion, runtime.GOOS, runtime.GOARCH)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -112,7 +112,7 @@ func handleMCPRequest(w *bufio.Writer, req *mcpRequest) {
 			},
 			"serverInfo": map[string]interface{}{
 				"name":    "pubcraft",
-				"version": "1.0.0-alpha.1",
+				"version": appVersion,
 			},
 		})
 
@@ -192,6 +192,10 @@ func handleMCPRequest(w *bufio.Writer, req *mcpRequest) {
 						"destination": map[string]interface{}{
 							"type":        "string",
 							"description": "Percorso del file di destinazione (opzionale, default nella home)",
+							"overwrite": map[string]interface{}{
+								"type":        "boolean",
+								"description": "Sovrascrivi il file di destinazione se esiste gia' (default false)",
+							},
 						},
 					},
 					"required": []string{"report_id"},
@@ -244,7 +248,7 @@ func handleMCPToolCall(w *bufio.Writer, req *mcpRequest) {
 					_ = json.NewDecoder(resp.Body).Decode(&status)
 				}
 			}
-			status["app_version"] = "1.0.0-alpha.1"
+			status["app_version"] = appVersion
 			status["gui_connected"] = true
 			status["gui_pid"] = inst.PID
 			status["gui_url"] = inst.URL
@@ -279,7 +283,7 @@ func handleMCPToolCall(w *bufio.Writer, req *mcpRequest) {
 		// Fallback locale headless
 		status := GetDiagStatusSummary()
 		vDir := getVaultDir()
-		status["app_version"] = "1.0.0-alpha.1"
+		status["app_version"] = appVersion
 		status["vault"] = vDir
 		b := loadBook()
 		if b != nil {

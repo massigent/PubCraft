@@ -19,7 +19,7 @@ func isProjectMutation(method, path string) bool {
 	case "/api/newchapter", "/api/deletechapter", "/api/reorder", "/api/setstyle",
 		"/api/setfont", "/api/setopening", "/api/setscenebreak", "/api/addcover",
 		"/api/delcover", "/api/useasepubcover", "/api/uploadimage", "/api/settitle",
-		"/api/note-to-chapter", "/api/note", "/api/delnote":
+		"/api/setchaptertitle", "/api/note-to-chapter", "/api/note", "/api/delnote":
 		return true
 	}
 	return false
@@ -33,7 +33,7 @@ func projectGuard(next http.Handler) http.Handler {
 		switch cleanPath {
 		case "/api/save", "/api/build", "/api/publication-preview", "/api/openat",
 			"/api/newproject", "/api/import", "/api/importdocx", "/api/import-manuscript",
-			"/api/settitle", "/api/note-to-chapter", "/api/closebook", "/api/note", "/api/delnote":
+			"/api/settitle", "/api/setchaptertitle", "/api/note-to-chapter", "/api/closebook", "/api/note", "/api/delnote":
 			guarded = true
 		}
 		if !guarded {

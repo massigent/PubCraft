@@ -12,21 +12,22 @@ go -C src/pubcraftgui test -run '^$' -fuzz '^FuzzParsePDFData$' -fuzztime=3s -pa
 
 ## Browser tests
 
-The canonical browser test suite consists of 14 test runners, in the same order used by `make check-browser` and `npm test`:
-1. `test_preview_geometry.cjs`: Trim/bleed geometry, zoom, gutter, and settings persistence.
-2. `test_audit4_fixes.cjs`: Concurrency, rapid chapter switching, and cross-vault build isolation.
-3. `test_languages_preview.cjs`: Ten UI languages, RTL layout, Watch synchronization, and print settings.
-4. `test_transitions_and_export.cjs`: Project switching safety, export pre-flush, and invalid-folder rejection.
-5. `test_project_safety.cjs`: New-book flows, quoted-title reloads, YAML validation, locked structural actions, and stale-vault rejection.
-6. `test_i18n_and_preview.cjs`: Manuscript print preview and automatic language detection.
-7. `test_publication_preview.cjs`: Publication preview, isolated artifacts, PDF.js rendering, facing spreads, and guide overlays.
-8. `test_editor_toolbar.cjs`: Formatting toolbar, keyboard shortcuts, image upload, clipboard paste, and autosave.
-9. `test_welcome_and_recents.cjs`: Welcome screen, tutorial, recent books, workspace management, and file browser.
-10. `test_notebook_and_title.cjs`: Notes, title editing, conversion, and save-failure behavior.
-11. `test_focus_mode.cjs`: Focus-mode editing and controls.
-12. `test_dark_mode.cjs`: Dark-theme behavior and styling.
-13. `test_topbar_responsiveness.cjs`: Responsive toolbar layout and hit targets.
-14. `test_line_breaks.cjs`: Paragraph and line-break behavior in preview and print output.
+The canonical browser test suite consists of 15 test runners:
+1. `test_preview_geometry.cjs`: Preview panel geometry and layout stability.
+2. `test_audit4_fixes.cjs`: Concurrency, rapid chapter switching, and cross-vault build isolation regressions.
+3. `test_languages_preview.cjs`: UI localization (10 languages), RTL layout, Watch sync, and print settings.
+4. `test_transitions_and_export.cjs`: Project switching safety (P0 identical files), export pre-flush (P1), and invalid folder rejection (P1 Politica A).
+5. `test_project_safety.cjs`: Real new-book clicks from all three entry points, quoted-title reloads, YAML document markers/schema checks, locked structural actions, and stale-vault rejection.
+6. `test_i18n_and_preview.cjs`: Manuscript print preview rendering and auto language detection.
+7. `test_publication_preview.cjs`: Manual publication preview (Option A), zero builds on open/type/interaction, pre-build flush, isolated preview artifacts, PDF.js byte rendering, facing spreads, and guide overlays.
+8. `test_editor_toolbar.cjs`: Minimalist formatting toolbar (bold, italic, H2, H3, blockquote, lists, scene break, link), native shortcuts (Cmd+B, Cmd+I, Cmd+K), image upload into `images/`, clipboard paste, and auto-save.
+9. `test_welcome_and_recents.cjs`: Welcome launcher screen, 10-language localized UI, tutorial & keyboard shortcuts modal, 1-click recent books opening, book close return, workspace folder management, and file browser quick access.
+10. `test_notebook_and_title.cjs`: Book notebook drawer, in-place title rename, autosave queue with slow network resistance, conflict detection, and note-to-chapter conversion.
+11. `test_focus_mode.cjs`: Distraction-free full-screen writing mode (F11/Esc), typewriter centered scrolling, and dimming modes.
+12. `test_dark_mode.cjs`: Dark mode theme switching, persistence, contrast checks, and modal styling.
+13. `test_topbar_responsiveness.cjs`: Topbar and docbar responsiveness across breakpoints, unified dropdowns, and compact layouts.
+14. `test_line_breaks.cjs`: Single line breaks preserved as visual paragraphs in book preview rendering.
+15. `test_residual_selection.cjs`: Selecting/importing Markdown files in a folder that is already a book preserves chapters, IDs, titles, order and custom metadata; invalid `book.yaml` is rejected byte-for-byte.
 
 Execute via either Makefile or npm:
 
@@ -75,7 +76,7 @@ be certified merely by building the native macOS application.
 Check portable archives before publishing:
 
 ```sh
-python3 tests/check_packages.py build/PubCraft-1.0.0-alpha.1-macos.tar.gz
+python3 tests/check_packages.py build/PubCraft-1.0.0-macos.tar.gz
 make verify-packages  # checks all three portable archives; old ones must fail
 ```
 

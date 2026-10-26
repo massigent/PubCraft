@@ -20,6 +20,13 @@ out-stampa-*/
 
 # Dipendenze dei test e stato locale delle esportazioni
 node_modules/
+__pycache__/
+*.pyc
+/src/pubcraftgui/pubcraftgui
+/out-*/
+/video/
+*.scriv/
+*.scrivtemplate
 .pubcraft-print.json
 .pubcraft-write-*
 

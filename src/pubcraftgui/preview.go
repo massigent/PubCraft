@@ -121,6 +121,34 @@ func registerPreviewArtifact(art *PreviewArtifact) {
 
 	// Keep max 5 recent preview artifacts per vault, cleaning up older ones safely
 	const maxRecent = 5
+	// Tetto globale: evita crescita illimitata su istanze di lunga durata
+	// che generano anteprime per molti progetti diversi.
+	const maxTotal = 25
+	if len(previewRegistry.items) >= maxTotal {
+		oldestID := ""
+		var oldest time.Time
+		for id, a := range previewRegistry.items {
+			if oldestID == "" || a.GeneratedAt.Before(oldest) {
+				oldestID, oldest = id, a.GeneratedAt
+			}
+		}
+		if oldestID != "" {
+			if oldArt := previewRegistry.items[oldestID]; oldArt != nil {
+				if oldArt.OutDir != "" && strings.HasPrefix(filepath.Clean(oldArt.OutDir), filepath.Clean(previewCacheBaseDir())) {
+					_ = os.RemoveAll(oldArt.OutDir)
+				}
+				delete(previewRegistry.items, oldestID)
+				vHashOld := vaultHashKey(oldArt.Vault)
+				kept := previewRegistry.vaultItems[vHashOld][:0]
+				for _, x := range previewRegistry.vaultItems[vHashOld] {
+					if x != oldestID {
+						kept = append(kept, x)
+					}
+				}
+				previewRegistry.vaultItems[vHashOld] = kept
+			}
+		}
+	}
 	list := previewRegistry.vaultItems[vHash]
 	if len(list) > maxRecent {
 		overflow := len(list) - maxRecent
@@ -250,6 +278,12 @@ func apiPublicationPreview(w http.ResponseWriter, r *http.Request) {
 	b, err := parseBookYAML(filepath.Join(vDir, "book.yaml"))
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, "Metadati del libro non validi: "+err.Error())
+		return
+	}
+	// UUID stabile prima del calcolo revisione (evita warning spuri di
+	// "sorgenti modificate" quando la CLI lo persiste durante la build).
+	if err := ensureBookUUID(vDir, b); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "Impossibile rendere stabile l'identificatore del libro: "+err.Error())
 		return
 	}
 

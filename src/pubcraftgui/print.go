@@ -196,6 +196,11 @@ func buildPrint(vDir string, b *Book, c printConfig) (html, pdf, output string, 
 	if toolPath == "" {
 		return "", "", "", fmt.Errorf("pubcraft non trovato")
 	}
+	// Persistenza dell'uuid PRIMA della revisione/stamp: evita warning spuri e
+	// garantisce un identificatore stabile anche al primo export.
+	if err = ensureBookUUID(vDir, b); err != nil {
+		return "", "", "", err
+	}
 	c.OutDir, err = filepath.Abs(c.OutDir)
 	if err != nil {
 		return

@@ -79,6 +79,13 @@ header h1 {
   letter-spacing: .01em;
 }
 
+h1 {
+  font-size: 1.55em;
+  margin: 2em 0 .5em;
+  text-align: center;
+  font-weight: bold;
+}
+
 .byline {
   color: var(--muted);
   font-style: italic;

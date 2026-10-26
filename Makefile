@@ -1,4 +1,6 @@
-VERSION=1.0.0-alpha.1
+VERSION=$(shell tr -d '\r\n' < VERSION)
+PKG_VERSION=1.0.0.2
+GOFLAGS=-trimpath
 CC=clang
 CFLAGS=-std=c11 -Wall -Wextra -O2
 PREFIX=/usr/local
@@ -30,7 +32,7 @@ $(HTML2PDF): $(HTML2PDFSRC)
 # GUI web locale (binario unico con interfaccia incorporata)
 $(GUI): $(GUISRC) $(GUIWEB)
 	@mkdir -p build
-	go -C src/pubcraftgui build -o ../../build/pubcraftgui .
+	go -C src/pubcraftgui build $(GOFLAGS) -o ../../build/pubcraftgui .
 
 # installazione nel sistema (binary + man page)
 install: $(BIN) $(GUI)
@@ -61,7 +63,14 @@ app: $(BIN) $(GUI) $(HTML2PDF) $(FONTFILES) $(THIRDPARTY)
 	cp -R third-party-licenses $(APP)/Contents/Resources/
 	cp src/AppIcon.icns $(APP)/Contents/Resources/droplet.icns
 	cp src/AppIcon.icns $(APP)/Contents/Resources/applet.icns 2>/dev/null || true
-	@echo "app pronta: $(APP)"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(PKG_VERSION)" $(APP)/Contents/Info.plist
+	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft
+	codesign --force --sign - $(APP)/Contents/MacOS/pubcraftgui
+	@if [ -f $(APP)/Contents/MacOS/pubcraft-html2pdf ]; then codesign --force --sign - $(APP)/Contents/MacOS/pubcraft-html2pdf; fi
+	codesign --force --sign - $(APP)
+	codesign --verify --deep --strict $(APP)
+	@echo "app pronta (firma ad-hoc, non notarizzata): $(APP)"
 
 # immagine disco con app + scorciatoia Applicazioni + istruzioni
 dmg: app
@@ -97,7 +106,8 @@ check-browser: all
 	NODE_PATH=tests/node_modules node tests/test_focus_mode.cjs && \
 	NODE_PATH=tests/node_modules node tests/test_dark_mode.cjs && \
 	NODE_PATH=tests/node_modules node tests/test_topbar_responsiveness.cjs && \
-	NODE_PATH=tests/node_modules node tests/test_line_breaks.cjs
+	NODE_PATH=tests/node_modules node tests/test_line_breaks.cjs && \
+	NODE_PATH=tests/node_modules node tests/test_residual_selection.cjs
 
 verify-packages:
 	python3 tests/check_packages.py
@@ -133,7 +143,7 @@ pkg-macos: dmg
 	@chmod +x /tmp/pubcraft-mac-stage/install.sh
 	@tar -czf $(CURDIR)/build/PubCraft-$(VERSION)-macos.tar.gz -C /tmp/pubcraft-mac-stage .
 	@rm -rf /tmp/pubcraft-mac-stage
-	@mkdir -p /tmp/pubcraft-pkg-root && cp -R $(APP) /tmp/pubcraft-pkg-root/ && pkgbuild --root /tmp/pubcraft-pkg-root --identifier com.pubcraft.app --version $(VERSION) --install-location /Applications $(CURDIR)/build/PubCraft-$(VERSION).pkg >/dev/null 2>&1 && rm -rf /tmp/pubcraft-pkg-root
+	@mkdir -p /tmp/pubcraft-pkg-root && cp -R $(APP) /tmp/pubcraft-pkg-root/ && pkgbuild --root /tmp/pubcraft-pkg-root --identifier com.pubcraft.app --version $(PKG_VERSION) --install-location /Applications $(CURDIR)/build/PubCraft-$(VERSION).pkg >/dev/null 2>&1 && rm -rf /tmp/pubcraft-pkg-root
 	@echo "Pacchetto macOS pronto: build/PubCraft-$(VERSION).dmg, build/PubCraft-$(VERSION).pkg e build/PubCraft-$(VERSION)-macos.tar.gz"
 
 pkg-linux: linux-amd64 appimage

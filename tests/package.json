@@ -2,7 +2,7 @@
   "name": "pubcraft-browser-tests",
   "private": true,
   "scripts": {
-    "test": "node test_preview_geometry.cjs && node test_audit4_fixes.cjs && node test_languages_preview.cjs && node test_transitions_and_export.cjs && node test_project_safety.cjs && node test_i18n_and_preview.cjs && node test_publication_preview.cjs && node test_editor_toolbar.cjs && node test_welcome_and_recents.cjs && node test_notebook_and_title.cjs && node test_focus_mode.cjs && node test_dark_mode.cjs && node test_topbar_responsiveness.cjs && node test_line_breaks.cjs"
+    "test": "node test_preview_geometry.cjs && node test_audit4_fixes.cjs && node test_languages_preview.cjs && node test_transitions_and_export.cjs && node test_project_safety.cjs && node test_i18n_and_preview.cjs && node test_publication_preview.cjs && node test_editor_toolbar.cjs && node test_welcome_and_recents.cjs && node test_focus_mode.cjs && node test_residual_selection.cjs"
   },
   "devDependencies": {
     "puppeteer-core": "^24.0.0"

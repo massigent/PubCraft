@@ -7,7 +7,7 @@ import tarfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '1.0.0-alpha.1'
+VERSION = (ROOT / 'VERSION').read_text().strip()
 PACKAGES = {
     f'PubCraft-{VERSION}-macos.tar.gz': ('pubcraft', 'pubcraftgui'),
     f'PubCraft-{VERSION}-linux-x64.tar.gz': ('pubcraft-linux-amd64', 'pubcraftgui-linux-amd64'),

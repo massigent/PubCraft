@@ -298,7 +298,13 @@ func TestFolderAndMultiFileImportEndpoints(t *testing.T) {
 		t.Fatalf("attesi tutti e 3 i capitoli dall'intera cartella, trovati: %+v", st.Book)
 	}
 
-	// 2. Importa solo file selezionati con Cmd/Ctrl (selezione parziale)
+	// 2. Seleziona solo alcuni file con Cmd/Ctrl (selezione parziale).
+	// La cartella è già un libro: la selezione NON deve ridurre la lista
+	// capitoli né alterare ordine, ID, titoli o tipi esistenti.
+	beforeIDs := make([]string, len(st.Book.Chapters))
+	for i, c := range st.Book.Chapters {
+		beforeIDs[i] = c.ID
+	}
 	reqBody = strings.NewReader(`{"dir":"` + filepath.ToSlash(tmpDir) + `","files":["01-intro.md","03-cap2.md"]}`)
 	req = httptest.NewRequest("POST", "/api/import-manuscript", reqBody)
 	w = httptest.NewRecorder()
@@ -310,11 +316,16 @@ func TestFolderAndMultiFileImportEndpoints(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &stMulti); err != nil {
 		t.Fatal(err)
 	}
-	if stMulti.Book == nil || len(stMulti.Book.Chapters) != 2 {
-		t.Fatalf("attesi esattamente 2 capitoli selezionati, trovati: %+v", stMulti.Book)
+	if stMulti.Book == nil || len(stMulti.Book.Chapters) != 3 {
+		t.Fatalf("la selezione parziale non deve eliminare capitoli: trovati: %+v", stMulti.Book)
 	}
-	if stMulti.Book.Chapters[0].File != "01-intro.md" || stMulti.Book.Chapters[1].File != "03-cap2.md" {
-		t.Fatalf("capitoli non corrispondono alla selezione: %+v", stMulti.Book.Chapters)
+	for i, want := range []string{"01-intro.md", "02-cap1.md", "03-cap2.md"} {
+		if stMulti.Book.Chapters[i].File != want {
+			t.Fatalf("ordine capitoli alterato in posizione %d: %+v", i, stMulti.Book.Chapters)
+		}
+		if stMulti.Book.Chapters[i].ID != beforeIDs[i] {
+			t.Fatalf("ID capitolo alterato per %s: %q -> %q", want, beforeIDs[i], stMulti.Book.Chapters[i].ID)
+		}
 	}
 }
 

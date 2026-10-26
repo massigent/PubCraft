@@ -351,6 +351,43 @@ if ! echo "$EPUB_CH1" | grep -q '<table class="book-table">'; then
 fi
 echo "  ✔ Tabelle Markdown compilate correttamente in EPUB e stampa con allineamenti e stili inline."
 
+# -----------------------------------------------------------------------------
+# Test 10: pubcraft init con titolo contenente due punti e caratteri speciali
+# -----------------------------------------------------------------------------
+echo "[Test 10] Verifica pubcraft init con quoting corretto del titolo in YAML..."
+"$BIN" init "$TMP_DIR/v10" "Libro: sottotitolo speciale"
+if ! grep -q 'title: "Libro: sottotitolo speciale"' "$TMP_DIR/v10/book.yaml"; then
+    echo "FALLITO: Titolo non quotato correttamente in book.yaml!" >&2
+    exit 1
+fi
+INFO_OUT=$("$BIN" info "$TMP_DIR/v10")
+if ! echo "$INFO_OUT" | grep -qE "titolo:\s+Libro: sottotitolo speciale"; then
+    echo "FALLITO: pubcraft info non ha estratto correttamente il titolo con due punti!" >&2
+    exit 1
+fi
+echo "  ✔ pubcraft init ha quotato correttamente il titolo e pubcraft info lo ha interpretato con successo."
+
+# -----------------------------------------------------------------------------
+# Test 11: pubcraft init non sovrascrive un 01-capitolo-1.md preesistente
+# -----------------------------------------------------------------------------
+echo "[Test 11] Verifica protezione da sovrascrittura di capitoli preesistenti in pubcraft init..."
+mkdir -p "$TMP_DIR/v11"
+printf "MANUSCRITTO_DA_PROTEGGERE" > "$TMP_DIR/v11/01-capitolo-1.md"
+set +e
+"$BIN" init "$TMP_DIR/v11" "Tentativo Sovrascrittura" >/dev/null 2>&1
+RC_INIT=$?
+set -e
+if [ "$RC_INIT" -eq 0 ]; then
+    echo "FALLITO: pubcraft init è uscito con 0 invece di rifiutare la sovrascrittura del capitolo preesistente!" >&2
+    exit 1
+fi
+REMAINING_CONTENT=$(cat "$TMP_DIR/v11/01-capitolo-1.md")
+if [ "$REMAINING_CONTENT" != "MANUSCRITTO_DA_PROTEGGERE" ]; then
+    echo "FALLITO: 01-capitolo-1.md è stato corrotto o sovrascritto!" >&2
+    exit 1
+fi
+echo "  ✔ pubcraft init ha bloccato la sovrascrittura del manoscritto restituendo codice d'uscita diverso da 0."
+
 echo "=========================================================="
 echo " TUTTI I TEST DELLA CLI PUBCRAFT SONO STATI SUPERATI CON SUCCESSO! "
 echo "=========================================================="

@@ -1,6 +1,7 @@
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 const { spawn } = require('child_process');
 
 (async () => {
@@ -16,14 +17,30 @@ const { spawn } = require('child_process');
   fs.writeFileSync(path.join(vault, '01.md'), '# Capitolo Uno\n\n' + customText1);
   fs.writeFileSync(path.join(vault, '02.md'), '# Chapter Two\n\n' + customText2);
 
-  const port = 54399;
+  const port = await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const val = server.address().port;
+      server.close(() => resolve(val));
+    });
+  });
+
+  const url = `http://127.0.0.1:${port}`;
   const guiProc = spawn(path.join(root, 'build/pubcraftgui'), [vault], {
     env: { ...process.env, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
 
-  await new Promise((r) => setTimeout(r, 800));
-  const url = `http://127.0.0.1:${port}`;
+  let ready = false;
+  for (let i = 0; i < 80; i++) {
+    try {
+      const res = await fetch(`${url}/api/state`);
+      if (res.ok) { ready = true; break; }
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 75));
+  }
+  if (!ready) throw new Error('Server pubcraftgui non pronto su porta ' + port);
 
   const browser = await puppeteer.connect({
     browserURL: process.env.BROWSER_CDP_URL || 'http://127.0.0.1:9222',
@@ -32,13 +49,17 @@ const { spawn } = require('child_process');
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
   page.on('dialog', (d) => d.accept());
+  page.on('console', msg => console.log('I18N PAGE LOG:', msg.text()));
+  page.on('pageerror', err => console.log('I18N PAGE ERROR:', err));
 
   try {
     await page.goto(url);
     await page.waitForFunction(() => typeof currentFile !== 'undefined' && currentFile === '01.md');
 
     console.log('\n--- TEST A: Anteprima reale del manoscritto nel Modal di Stampa ---');
-    // Clicca sul pulsante stampa per aprire il modal
+    // Clicca sul pulsante stampa nel menu esporta per aprire il modal
+    await page.click('#btnExportMenu');
+    await page.waitForSelector('#exportList:not(.hidden)');
     await page.click('#btnPrint');
     await page.waitForSelector('#printModal:not(.hidden)');
 
@@ -120,7 +141,7 @@ const { spawn } = require('child_process');
 
       const texts = await page.evaluate(() => ({
         btnNewProject: document.getElementById('btnNewProject').textContent.trim(),
-        btnPrint: document.getElementById('btnPrint').textContent.trim(),
+        btnPrint: (document.querySelector('#btnPrint strong') || document.getElementById('btnPrint')).textContent.trim(),
         htmlLang: document.documentElement.lang,
         storedLang: localStorage.getItem('pubcraft_lang'),
       }));

@@ -34,7 +34,11 @@ const TUTORIAL_DATA = {
     s8: "Close Modal",
     s8d: "Dismiss dialogs, file picker, and publication preview",
     s9: "Focus Mode",
-    s9d: "Toggle full-screen distraction-free typewriter mode"
+    s9d: "Toggle full-screen distraction-free typewriter mode",
+    s10: "Toggle Sidebar",
+    s10d: "Show or hide the left navigation sidebar",
+    s11: "Command Palette",
+    s11d: "Search chapters, notes, and actions instantly"
   },
   it: {
     heroTitle: "Benvenuto in PubCraft",
@@ -69,7 +73,11 @@ const TUTORIAL_DATA = {
     s8: "Chiudi Finestra",
     s8d: "Chiude finestre modali, selettore cartelle e anteprima",
     s9: "Modalità Non Disturbo",
-    s9d: "Attiva la scrittura a tutto schermo senza distrazioni (layout macchina da scrivere)"
+    s9d: "Attiva la scrittura a tutto schermo senza distrazioni (layout macchina da scrivere)",
+    s10: "Barra Laterale",
+    s10d: "Mostra o nascondi la barra laterale sinistra (stile Obsidian)",
+    s11: "Command Palette",
+    s11d: "Cerca e salta a capitoli, note o comandi rapidi"
   },
   es: {
     heroTitle: "Bienvenido a PubCraft",
@@ -397,6 +405,16 @@ function getTutorialHTML(lang, tab) {
             <td><b>${d.s9 || "Focus Mode"}</b></td>
             <td><kbd>F11</kbd> / <kbd>${mod}+Shift+F</kbd></td>
             <td>${d.s9d || "Toggle distraction-free focus mode"}</td>
+          </tr>
+          <tr>
+            <td><b>${d.s10 || "Sidebar"}</b></td>
+            <td><kbd>${mod}+\\</kbd></td>
+            <td>${d.s10d || "Toggle left sidebar visibility"}</td>
+          </tr>
+          <tr>
+            <td><b>${d.s11 || "Command Palette"}</b></td>
+            <td><kbd>${mod}+K</kbd></td>
+            <td>${d.s11d || "Cerca capitoli, note o comandi rapidi"}</td>
           </tr>
         </tbody>
       </table>

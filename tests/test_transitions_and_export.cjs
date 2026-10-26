@@ -69,8 +69,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     const pageErrors = [];
     page.on('pageerror', err => pageErrors.push(err.message));
 
-    await page.goto(url);
-    await page.waitForFunction(() => currentFile === '01.md');
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof currentFile !== 'undefined' && currentFile === '01.md', { polling: 100, timeout: 15000 });
 
     console.log('\n--- 1. TEST P0: Cambio progetto con capitoli identici e blocco transizione ---');
     // Test that typing during the switch cannot leak to Vault B

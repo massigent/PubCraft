@@ -69,7 +69,11 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     }, linesText);
 
     // Attendi aggiornamento anteprima
-    await wait(600);
+    await page.waitForFunction(() => {
+      const frame = document.getElementById('prevFrame');
+      const doc = frame && (frame.contentDocument || frame.contentWindow?.document);
+      return doc && doc.querySelectorAll('article.preview p').length >= 3;
+    }, { timeout: 5000, polling: 100 });
 
     console.log('[Test 2] Verifica rendering anteprima live (prevFrame)...');
     const previewData = await page.evaluate(() => {

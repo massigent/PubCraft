@@ -9,6 +9,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
@@ -42,10 +43,13 @@ import (
 var webFS embed.FS
 
 type Chapter struct {
-	File  string `json:"file"`
-	Title string `json:"title"`
-	ID    string `json:"id"`
-	Type  string `json:"type,omitempty"`
+	File    string `json:"file"`
+	Title   string `json:"title"`
+	ID      string `json:"id"`
+	Type    string `json:"type,omitempty"`
+	Words   int    `json:"words,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Status  string `json:"status,omitempty"`
 }
 
 type Book struct {
@@ -61,8 +65,10 @@ type Book struct {
 	Trim        string            `json:"trim,omitempty"`
 	Pages       int               `json:"pages,omitempty"`
 	Bleed       bool              `json:"bleed,omitempty"`
+	TotalWords  int               `json:"total_words,omitempty"`
 	Chapters    []Chapter         `json:"chapters"`
 	ExtraFields map[string]string `json:"extra_fields,omitempty"`
+	extraRaw    map[string]string `json:"-"`
 }
 
 type State struct {
@@ -75,6 +81,7 @@ type State struct {
 	WorkspaceDir string `json:"workspaceDir,omitempty"`
 	VaultModTime string `json:"vaultModTime,omitempty"`
 	FileCount    int    `json:"fileCount,omitempty"`
+	BookError    string `json:"book_error,omitempty"`
 }
 
 var (
@@ -377,8 +384,10 @@ func apiWatchBook(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, c := range b.Chapters {
 		body := ""
-		if data, err := os.ReadFile(filepath.Join(vDir, c.File)); err == nil {
-			body = string(data)
+		if full, ferr := containedFile(vDir, c.File, true); ferr == nil {
+			if data, err := os.ReadFile(full); err == nil {
+				body = string(data)
+			}
 		}
 		resp.Chapters = append(resp.Chapters, WatchChapter{
 			File:    c.File,
@@ -416,6 +425,17 @@ func cleanYAMLVal(s string) string {
 	return v
 }
 
+// capitalizeFirst rende maiuscola la prima runa senza spezzare i caratteri
+// multibyte (l'indicizzazione per byte [:1]/[1:] corrompe titoli come "èra ...").
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
+}
+
 func isKnownField(k string) bool {
 	switch k {
 	case "title", "author", "language", "style", "opening", "font", "scenebreak", "trim", "pages", "bleed", "uuid", "cover", "chapters":
@@ -441,15 +461,22 @@ func parseBookYAML(path string) (*Book, error) {
 	// Titoli mancanti e tipi derivati.
 	for i := range b.Chapters {
 		if b.Chapters[i].Title == "" {
-			b.Chapters[i].Title = strings.TrimSuffix(b.Chapters[i].File, ".md")
+			ext := filepath.Ext(b.Chapters[i].File)
+			b.Chapters[i].Title = strings.TrimSuffix(b.Chapters[i].File, ext)
 		}
 		if b.Chapters[i].Type == "" {
 			low := strings.ToLower(b.Chapters[i].File + " " + b.Chapters[i].Title)
 			switch {
+			case strings.Contains(low, "copyright") || strings.Contains(low, "colophon"):
+				b.Chapters[i].Type = "copyright"
 			case strings.Contains(low, "dedica") || strings.Contains(low, "dedication"):
 				b.Chapters[i].Type = "dedication"
 			case strings.Contains(low, "epigra") || strings.Contains(low, "epigraph"):
 				b.Chapters[i].Type = "epigraph"
+			case strings.Contains(low, "prolog") || strings.Contains(low, "prologue"):
+				b.Chapters[i].Type = "prologue"
+			case strings.Contains(low, "epilog") || strings.Contains(low, "epilogue"):
+				b.Chapters[i].Type = "epilogue"
 			case strings.Contains(low, "autore") || strings.Contains(low, "about"):
 				b.Chapters[i].Type = "about-author"
 			case strings.Contains(low, "ringrazia") || strings.Contains(low, "acknowledg"):
@@ -464,6 +491,78 @@ func parseBookYAML(path string) (*Book, error) {
 	return b, nil
 }
 
+// parseChapterWordsAndSummary estrae il conteggio parole dal corpo Markdown,
+// l'eventuale sinossi/promemoria (campo summary o synopsis) e lo stato del capitolo (campo status o stato).
+func parseChapterWordsAndSummary(data []byte) (int, string, string) {
+	s := stripBOM(string(data))
+	body := s
+	var summary string
+	var status string
+
+	if head, rest, ok := splitFrontmatter(s); ok {
+		body = rest
+		lines := strings.Split(head, "\n")
+		// lines[0] e lines[len-1] sono le recinzioni "---"
+		for _, line := range lines[1:] {
+			line = strings.TrimSpace(line)
+			if line == "---" {
+				break
+			}
+			low := strings.ToLower(line)
+			if strings.HasPrefix(low, "summary:") {
+				val := strings.TrimSpace(line[len("summary:"):])
+				val = strings.Trim(val, `"\'`)
+				summary = val
+			} else if strings.HasPrefix(low, "synopsis:") {
+				val := strings.TrimSpace(line[len("synopsis:"):])
+				val = strings.Trim(val, `"\'`)
+				summary = val
+			} else if strings.HasPrefix(low, "status:") || strings.HasPrefix(low, "stato:") {
+				colonIdx := strings.Index(line, ":")
+				if colonIdx != -1 {
+					val := strings.TrimSpace(line[colonIdx+1:])
+					val = strings.ToLower(strings.Trim(val, `"\' `))
+					status = val
+				}
+			}
+		}
+	}
+
+	words := len(strings.Fields(body))
+	return words, summary, status
+}
+
+// populateChapterStats calcola il numero di parole, la sinossi e lo stato di ogni capitolo
+// leggendo i file dal vault e sommando il totale parole del libro.
+func populateChapterStats(b *Book, vDir string) {
+	if b == nil || vDir == "" {
+		return
+	}
+	total := 0
+	for i := range b.Chapters {
+		p, ferr := containedFile(vDir, b.Chapters[i].File, true)
+		var data []byte
+		var err error
+		if ferr == nil {
+			data, err = os.ReadFile(p)
+		} else {
+			err = ferr
+		}
+		if err != nil {
+			b.Chapters[i].Words = 0
+			b.Chapters[i].Summary = ""
+			b.Chapters[i].Status = ""
+			continue
+		}
+		w, sum, st := parseChapterWordsAndSummary(data)
+		b.Chapters[i].Words = w
+		b.Chapters[i].Summary = sum
+		b.Chapters[i].Status = st
+		total += w
+	}
+	b.TotalWords = total
+}
+
 func writeBookYAML(b *Book) error {
 	return writeBookYAMLAt(bookYAMLPath(), b)
 }
@@ -472,11 +571,16 @@ func writeBookYAMLAt(p string, b *Book) error {
 	if p == "" {
 		return errors.New("nessun vault aperto")
 	}
+	if strings.TrimSpace(b.UUID) == "" {
+		if id, err := newUUID(); err == nil {
+			b.UUID = id
+		}
+	}
 	var header strings.Builder
-	existingExtra := make(map[string]string)
+	existingRaw := make(map[string]string)
 	if orig, err := os.ReadFile(p); err == nil {
 		if previous, err := decodeBookYAML(orig); err == nil {
-			existingExtra = previous.ExtraFields
+			existingRaw = previous.extraRaw
 		}
 		for _, line := range strings.Split(string(orig), "\n") {
 			t := strings.TrimSpace(line)
@@ -521,42 +625,48 @@ func writeBookYAMLAt(p string, b *Book) error {
 		fmt.Fprintf(&s, "bleed: true\n")
 	}
 	if b.UUID != "" {
-		fmt.Fprintf(&s, "uuid: %s\n", b.UUID)
+		fmt.Fprintf(&s, "uuid: %s\n", yamlScalar(b.UUID))
 	}
 	if b.Cover != "" {
 		fmt.Fprintf(&s, "cover: %s\n", yamlScalar(b.Cover))
 	}
-	// Scrivi campi extra unificati e ordinati determinisicamente, senza duplicati
-	mergedExtra := make(map[string]string)
-	for k, v := range existingExtra {
+	// Scrivi campi extra unificati e ordinati determinisicamente, senza duplicati.
+	// I valori già letti dal file vengono riemessi alla lettera (extraRaw);
+	// quelli nuovi/creati a mano passano per yamlScalar.
+	mergedRaw := make(map[string]string)
+	for k, v := range existingRaw {
 		if !isKnownField(k) {
-			mergedExtra[k] = v
+			mergedRaw[k] = v
 		}
 	}
 	if b.ExtraFields != nil {
 		for k, v := range b.ExtraFields {
 			if !isKnownField(k) {
-				mergedExtra[k] = v
+				if raw, ok := b.extraRaw[k]; ok {
+					mergedRaw[k] = raw
+				} else {
+					mergedRaw[k] = yamlScalar(v)
+				}
 			}
 		}
 	}
 	var extraKeys []string
-	for k := range mergedExtra {
+	for k := range mergedRaw {
 		extraKeys = append(extraKeys, k)
 	}
 	sort.Strings(extraKeys)
 	for _, k := range extraKeys {
-		fmt.Fprintf(&s, "%s: %s\n", yamlScalar(k), yamlScalar(mergedExtra[k]))
+		fmt.Fprintf(&s, "%s: %s\n", yamlScalar(k), mergedRaw[k])
 	}
 	s.WriteString("chapters:\n")
 	for _, c := range b.Chapters {
-		fmt.Fprintf(&s, "- file: %s\n", c.File)
+		fmt.Fprintf(&s, "- file: %s\n", yamlScalar(c.File))
 		if c.ID != "" {
-			fmt.Fprintf(&s, "  id: %s\n", c.ID)
+			fmt.Fprintf(&s, "  id: %s\n", yamlScalar(c.ID))
 		}
 		fmt.Fprintf(&s, "  title: %s\n", yamlScalar(c.Title))
 		if c.Type != "" && c.Type != "chapter" {
-			fmt.Fprintf(&s, "  type: %s\n", c.Type)
+			fmt.Fprintf(&s, "  type: %s\n", yamlScalar(c.Type))
 		}
 	}
 	return atomicWriteFile(p, []byte(s.String()), 0o644)
@@ -577,27 +687,30 @@ func cutKV(s string) (string, string, bool) {
 func extractMarkdownTitle(path, fallbackFileName string) string {
 	data, err := os.ReadFile(path)
 	if err == nil {
-		lines := strings.Split(string(data), "\n")
-		inFrontmatter := false
-		for _, l := range lines {
-			l = strings.TrimSpace(l)
-			if l == "---" {
-				inFrontmatter = !inFrontmatter
-				continue
-			}
-			if inFrontmatter {
+		s := stripBOM(string(data))
+		// Solo il frontmatter a inizio documento conta: le righe "---" nel
+		// corpo (separatori orizzontali) non devono cambiare stato.
+		if head, _, ok := splitFrontmatter(s); ok {
+			for _, l := range strings.Split(head, "\n")[1:] {
+				l = strings.TrimSpace(l)
+				if l == "---" {
+					break
+				}
 				if k, v, ok := cutKV(l); ok && k == "title" {
 					v = strings.Trim(v, `"'`)
 					if v != "" {
 						return v
 					}
 				}
-				continue
 			}
-			if strings.HasPrefix(l, "# ") {
-				t := strings.TrimSpace(strings.TrimPrefix(l, "# "))
-				if t != "" {
-					return t
+		} else {
+			for _, l := range strings.Split(s, "\n") {
+				l = strings.TrimSpace(l)
+				if strings.HasPrefix(l, "# ") {
+					t := strings.TrimSpace(strings.TrimPrefix(l, "# "))
+					if t != "" {
+						return t
+					}
 				}
 			}
 		}
@@ -607,7 +720,7 @@ func extractMarkdownTitle(path, fallbackFileName string) string {
 	base = strings.ReplaceAll(base, "_", " ")
 	base = strings.TrimSpace(base)
 	if len(base) > 0 {
-		base = strings.ToUpper(base[:1]) + base[1:]
+		base = capitalizeFirst(base)
 	}
 	return base
 }
@@ -681,6 +794,12 @@ func isSpecialUserDir(dir string) bool {
 }
 
 func autoInitVaultFromMarkdown(dir string) *Book {
+	// L'auto-inizializzazione è ammessa solo se book.yaml manca davvero.
+	// Un file esistente (anche invalido) e un errore di permessi/lettura non
+	// devono mai essere interpretati come "cartella nuova".
+	if _, err := os.Stat(filepath.Join(dir, "book.yaml")); err == nil || !os.IsNotExist(err) {
+		return nil
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -724,35 +843,13 @@ func autoInitVaultFromMarkdown(dir string) *Book {
 	title = strings.ReplaceAll(title, "_", " ")
 	title = strings.TrimSpace(title)
 	if len(title) > 0 {
-		title = strings.ToUpper(title[:1]) + title[1:]
+		title = capitalizeFirst(title)
 	}
 
 	bookUUID, _ := newUUID()
 	var chapters []Chapter
 	for _, fn := range mdFiles {
-		chTitle := extractMarkdownTitle(filepath.Join(dir, fn), fn)
-		chUUID, _ := newUUID()
-		chType := "chapter"
-		lower := strings.ToLower(fn)
-		if strings.Contains(lower, "dedic") {
-			chType = "dedication"
-		} else if strings.Contains(lower, "epigr") {
-			chType = "epigraph"
-		} else if strings.Contains(lower, "pref") || strings.Contains(lower, "prolog") || strings.Contains(lower, "intro") {
-			chType = "prologue"
-		} else if strings.Contains(lower, "epilog") || strings.Contains(lower, "conclus") {
-			chType = "epilogue"
-		} else if strings.Contains(lower, "ringraz") || strings.Contains(lower, "acknowledg") {
-			chType = "acknowledgments"
-		} else if strings.Contains(lower, "autore") || strings.Contains(lower, "author") {
-			chType = "about-author"
-		}
-		chapters = append(chapters, Chapter{
-			File:  fn,
-			Title: chTitle,
-			ID:    chUUID,
-			Type:  chType,
-		})
+		chapters = append(chapters, chapterFromMarkdownFile(dir, fn))
 	}
 
 	bk := &Book{
@@ -767,7 +864,14 @@ func autoInitVaultFromMarkdown(dir string) *Book {
 	}
 	_ = os.MkdirAll(filepath.Join(dir, "cover"), 0o755)
 	_ = os.MkdirAll(filepath.Join(dir, "images"), 0o755)
-	_ = writeBookYAML(bk)
+	// Ricontrolla l'assenza subito prima della scrittura: se nel frattempo il
+	// file è comparso, non lo sovrascriviamo.
+	if _, statErr := os.Stat(filepath.Join(dir, "book.yaml")); statErr == nil || !os.IsNotExist(statErr) {
+		return nil
+	}
+	if err := writeBookYAMLAt(filepath.Join(dir, "book.yaml"), bk); err != nil {
+		return nil
+	}
 	return bk
 }
 
@@ -782,9 +886,16 @@ func loadBook() *Book {
 	}
 	b, err := parseBookYAML(p)
 	if err == nil && b != nil {
+		populateChapterStats(b, vDir)
 		return b
 	}
+	// book.yaml esiste ma non è valido: non rigenerarlo mai (perdita di
+	// metadati). L'auto-inizializzazione scatta solo se il file manca.
+	if err != nil && !os.IsNotExist(err) {
+		return nil
+	}
 	if auto := autoInitVaultFromMarkdown(vDir); auto != nil {
+		populateChapterStats(auto, vDir)
 		return auto
 	}
 	return nil
@@ -828,6 +939,10 @@ func apiState(w http.ResponseWriter, r *http.Request) {
 	if vDir != "" {
 		if b := loadBook(); b != nil {
 			st.Book = b
+		} else if p := bookYAMLPath(); p != "" {
+			if _, err := parseBookYAML(p); err != nil && !os.IsNotExist(err) {
+				st.BookError = err.Error()
+			}
 		}
 		fp := getCachedVaultFingerprint(vDir)
 		st.VaultModTime = fp.Hash
@@ -836,8 +951,13 @@ func apiState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, st)
 }
 
-// importSelectedFiles inizializza o apre il vault nella cartella dir includendo
-// unicamente i file specificati dall'utente (selezione multipla con Cmd/Ctrl).
+// importSelectedFiles apre la cartella dir includendo i file specificati
+// dall'utente. Se la cartella contiene già un book.yaml valido, la selezione
+// NON sostituisce la lista capitoli: i capitoli esistenti restano intatti
+// (ordine, ID, titoli, tipi) e gli eventuali file nuovi vengono accodati.
+// Se book.yaml esiste ma è invalido, l'operazione viene rifiutata senza
+// modificare nulla. L'inizializzazione è consentita solo se il file manca
+// davvero (un errore di permessi/lettura non equivale all'assenza).
 func importSelectedFiles(dir string, filenames []string) (*Book, error) {
 	dir = strings.TrimSpace(dir)
 	st, err := os.Stat(dir)
@@ -871,6 +991,42 @@ func importSelectedFiles(dir string, filenames []string) (*Book, error) {
 
 	sortNatural(validFiles)
 
+	yamlPath := filepath.Join(dir, "book.yaml")
+	yamlInfo, yamlErr := os.Stat(yamlPath)
+	switch {
+	case yamlErr == nil && yamlInfo.IsDir():
+		return nil, fmt.Errorf("book.yaml non è un file valido: %s", yamlPath)
+	case yamlErr == nil:
+		// Libro esistente: valida PRIMA di toccare qualsiasi cosa.
+		bk, err := parseBookYAML(yamlPath)
+		if err != nil {
+			return nil, fmt.Errorf("book.yaml esiste ma non è valido; nessuna modifica effettuata: %w", err)
+		}
+		existing := make(map[string]bool, len(bk.Chapters))
+		for _, c := range bk.Chapters {
+			existing[c.File] = true
+		}
+		var added []Chapter
+		for _, fn := range validFiles {
+			if existing[fn] {
+				continue
+			}
+			added = append(added, chapterFromMarkdownFile(dir, fn))
+			existing[fn] = true
+		}
+		if len(added) > 0 {
+			bk.Chapters = append(bk.Chapters, added...)
+			if err := writeBookYAMLAt(yamlPath, bk); err != nil {
+				return nil, fmt.Errorf("scrittura book.yaml fallita: %w", err)
+			}
+		}
+		setVault(dir)
+		return bk, nil
+	case !os.IsNotExist(yamlErr):
+		return nil, fmt.Errorf("impossibile verificare book.yaml: %w", yamlErr)
+	}
+
+	// book.yaml assente: inizializzazione esplicita della cartella.
 	folderName := filepath.Base(dir)
 	title := folderName
 	if title == "" || title == "." || title == "/" {
@@ -880,66 +1036,68 @@ func importSelectedFiles(dir string, filenames []string) (*Book, error) {
 	title = strings.ReplaceAll(title, "_", " ")
 	title = strings.TrimSpace(title)
 	if len(title) > 0 {
-		title = strings.ToUpper(title[:1]) + title[1:]
+		title = capitalizeFirst(title)
 	}
 
 	var chapters []Chapter
 	for _, fn := range validFiles {
-		fullPath := filepath.Join(dir, fn)
-		chTitle := extractMarkdownTitle(fullPath, fn)
-		chUUID, _ := newUUID()
-		chType := "chapter"
-		lower := strings.ToLower(fn)
-		if strings.Contains(lower, "dedic") {
-			chType = "dedication"
-		} else if strings.Contains(lower, "epigr") {
-			chType = "epigraph"
-		} else if strings.Contains(lower, "pref") || strings.Contains(lower, "prolog") || strings.Contains(lower, "intro") {
-			chType = "prologue"
-		} else if strings.Contains(lower, "epilog") || strings.Contains(lower, "conclus") {
-			chType = "epilogue"
-		} else if strings.Contains(lower, "ringraz") || strings.Contains(lower, "acknowledg") {
-			chType = "acknowledgments"
-		} else if strings.Contains(lower, "autore") || strings.Contains(lower, "author") {
-			chType = "about-author"
-		}
-		chapters = append(chapters, Chapter{
-			File:  fn,
-			Title: chTitle,
-			ID:    chUUID,
-			Type:  chType,
-		})
+		chapters = append(chapters, chapterFromMarkdownFile(dir, fn))
 	}
 
-	yamlPath := filepath.Join(dir, "book.yaml")
-	existingBook, _ := parseBookYAML(yamlPath)
-
-	var bk *Book
-	if existingBook != nil {
-		bk = existingBook
-		bk.Chapters = chapters
-	} else {
-		bookUUID, _ := newUUID()
-		bk = &Book{
-			Title:      title,
-			Author:     "",
-			Language:   "it",
-			Style:      "classico",
-			Opening:    "drop-cap",
-			SceneBreak: "asterischi",
-			UUID:       bookUUID,
-			Chapters:   chapters,
-		}
+	bookUUID, _ := newUUID()
+	bk := &Book{
+		Title:      title,
+		Author:     "",
+		Language:   "it",
+		Style:      "classico",
+		Opening:    "drop-cap",
+		SceneBreak: "asterischi",
+		UUID:       bookUUID,
+		Chapters:   chapters,
 	}
 
-	setVault(dir)
-	_ = os.MkdirAll(filepath.Join(dir, "cover"), 0o755)
-	_ = os.MkdirAll(filepath.Join(dir, "images"), 0o755)
-	if err := writeBookYAML(bk); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "cover"), 0o755); err != nil {
+		return nil, fmt.Errorf("creazione cover/ fallita: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "images"), 0o755); err != nil {
+		return nil, fmt.Errorf("creazione images/ fallita: %w", err)
+	}
+	if err := writeBookYAMLAt(yamlPath, bk); err != nil {
 		return nil, fmt.Errorf("scrittura book.yaml fallita: %w", err)
 	}
-
+	setVault(dir)
 	return bk, nil
+}
+
+// deriveChapterType mantiene la stessa inferenza usata da autoInit/import.
+func deriveChapterType(fileName string) string {
+	lower := strings.ToLower(fileName)
+	switch {
+	case strings.Contains(lower, "dedic"):
+		return "dedication"
+	case strings.Contains(lower, "epigr"):
+		return "epigraph"
+	case strings.Contains(lower, "pref"), strings.Contains(lower, "prolog"), strings.Contains(lower, "intro"):
+		return "prologue"
+	case strings.Contains(lower, "epilog"), strings.Contains(lower, "conclus"):
+		return "epilogue"
+	case strings.Contains(lower, "ringraz"), strings.Contains(lower, "acknowledg"):
+		return "acknowledgments"
+	case strings.Contains(lower, "autore"), strings.Contains(lower, "author"):
+		return "about-author"
+	}
+	return "chapter"
+}
+
+// chapterFromMarkdownFile costruisce una voce capitolo nuova (ID canonical).
+func chapterFromMarkdownFile(dir, fileName string) Chapter {
+	chUUID, _ := newUUID()
+	return Chapter{
+		File:  fileName,
+		Title: extractMarkdownTitle(filepath.Join(dir, fileName), fileName),
+		ID:    chUUID,
+		Type:  deriveChapterType(fileName),
+	}
 }
 
 // apiOpenAt apre un vault con percorso esplicito (da file browser web).
@@ -964,11 +1122,14 @@ func apiOpenAt(w http.ResponseWriter, r *http.Request) {
 		if len(req.Files) == 1 {
 			singleExt := strings.ToLower(filepath.Ext(req.Files[0]))
 			if singleExt != ".md" && singleExt != ".markdown" {
-				fullSingle := filepath.Join(p, req.Files[0])
+				fullSingle := filepath.Join(p, filepath.Base(req.Files[0]))
 				b, err := importAnyManuscript(fullSingle)
 				if err != nil {
 					jsonErrWithDiag(w, 400, err.Error(), "import", "IMPORT_FAILED", "apiOpenAt")
 					return
+				}
+				if b != nil {
+					populateChapterStats(b, getVaultDir())
 				}
 				writeJSON(w, State{Vault: getVaultDir(), Book: b})
 				return
@@ -979,6 +1140,9 @@ func apiOpenAt(w http.ResponseWriter, r *http.Request) {
 			jsonErrWithDiag(w, 400, err.Error(), "import", "IMPORT_FAILED", "apiOpenAt")
 			return
 		}
+		if b != nil {
+			populateChapterStats(b, getVaultDir())
+		}
 		writeJSON(w, State{Vault: getVaultDir(), Book: b})
 		return
 	}
@@ -987,11 +1151,14 @@ func apiOpenAt(w http.ResponseWriter, r *http.Request) {
 		jsonErrWithDiag(w, 400, "Percorso non trovato: "+p, "connection", "CONNECTION_ERROR", "apiOpenAt")
 		return
 	}
-	if !st.IsDir() {
+	if !st.IsDir() || strings.HasSuffix(strings.ToLower(p), ".scriv") || strings.HasSuffix(strings.ToLower(p), ".scrivtemplate") {
 		b, err := importAnyManuscript(p)
 		if err != nil {
 			jsonErrWithDiag(w, 400, err.Error(), "import", "IMPORT_FAILED", "apiOpenAt")
 			return
+		}
+		if b != nil {
+			populateChapterStats(b, getVaultDir())
 		}
 		writeJSON(w, State{Vault: getVaultDir(), Book: b})
 		return
@@ -1001,7 +1168,6 @@ func apiOpenAt(w http.ResponseWriter, r *http.Request) {
 	if err != nil || book == nil {
 		if os.IsNotExist(err) {
 			if autoBook := autoInitVaultFromMarkdown(p); autoBook != nil {
-				_ = writeBookYAML(autoBook)
 				book = autoBook
 			} else {
 				jsonErrWithDiag(w, 400, "Cartella non valida: book.yaml assente in "+p, "connection", "CONNECTION_ERROR", "apiOpenAt")
@@ -1013,11 +1179,27 @@ func apiOpenAt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setVault(p)
+	if book != nil {
+		populateChapterStats(book, p)
+	}
 	writeJSON(w, State{Vault: getVaultDir(), Book: book})
 }
 
 // apiNewProject crea un nuovo progetto libro (vault con book.yaml, capitolo iniziale, cover/ e images/)
+// requireNoDirtyClient rifiuta i cambi di progetto quando un client dichiara
+// modifiche non salvate (stessa protezione già usata da apiOpenAt).
+func requireNoDirtyClient(w http.ResponseWriter) bool {
+	if dirty, dirtyDesc, _ := getAnyClientDirty(); dirty {
+		jsonErrWithDiag(w, http.StatusConflict, fmt.Sprintf("Impossibile cambiare progetto: modifiche non salvate in corso (%s)", dirtyDesc), "app", "CLIENT_DIRTY", "apiChangeProject")
+		return false
+	}
+	return true
+}
+
 func apiNewProject(w http.ResponseWriter, r *http.Request) {
+	if !requireNoDirtyClient(w) {
+		return
+	}
 	var req struct {
 		ParentDir string `json:"parentDir"`
 		Folder    string `json:"folder"`
@@ -1183,6 +1365,13 @@ func apiFS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if e.IsDir() {
+			lowExt := strings.ToLower(filepath.Ext(name))
+			if mode == "files" && exts != nil && exts[lowExt] && (lowExt == ".scriv" || lowExt == ".scrivtemplate") {
+				if info, err2 := e.Info(); err2 == nil {
+					items = append(items, item{name, false, info.Size()})
+					continue
+				}
+			}
 			items = append(items, item{name, true, 0})
 			continue
 		}
@@ -1258,6 +1447,9 @@ func docxParseParas(data []byte) []docxParaData {
 	var run *docxRunData
 	// stack di contesto: cosa stiamo attraversando
 	inBody, inPPr, inRPr := false, false, false
+	// delDepth>0: dentro testo eliminato (revisioni Word) da non importare.
+	// brType: tipo di <w:br/> in corso ("page", "column", "textWrapping").
+	delDepth := 0
 	linkID := ""
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = false
@@ -1297,7 +1489,7 @@ func docxParseParas(data []byte) []docxParaData {
 					}
 				}
 			case "r":
-				if p != nil {
+				if p != nil && delDepth == 0 {
 					flushText()
 					p.runs = append(p.runs, docxRunData{link: linkID})
 					run = &p.runs[len(p.runs)-1]
@@ -1332,6 +1524,39 @@ func docxParseParas(data []byte) []docxParaData {
 				}
 			case "t":
 				// il testo arriva come chardata nel caso "default" qui sotto
+			case "del", "moveFrom":
+				delDepth++
+			case "br":
+				brType := ""
+				for _, a := range t.Attr {
+					if local(a.Name) == "type" {
+						brType = strings.ToLower(a.Value)
+					}
+				}
+				switch brType {
+				case "page", "column":
+					// Interruzione di pagina/colonna: separatore di scena,
+					// altrimenti andrebbe persa nell'import.
+					if p != nil && delDepth == 0 {
+						flushText()
+						p.runs = append(p.runs, docxRunData{link: linkID})
+						run = &p.runs[len(p.runs)-1]
+						run.text += "\n\n* * *\n\n"
+					}
+				default:
+					// A capo semplice.
+					if p != nil && run != nil && delDepth == 0 {
+						text.WriteString("\n")
+					}
+				}
+			case "tab":
+				if p != nil && run != nil && delDepth == 0 {
+					text.WriteString("\t")
+				}
+			case "noBreakHyphen":
+				if p != nil && run != nil && delDepth == 0 {
+					text.WriteString("\u2011")
+				}
 			case "hyperlink":
 				if p != nil {
 					for _, a := range t.Attr {
@@ -1342,7 +1567,7 @@ func docxParseParas(data []byte) []docxParaData {
 				}
 			}
 		case xml.CharData:
-			if run != nil {
+			if run != nil && delDepth == 0 {
 				text.Write(t)
 			}
 		case xml.EndElement:
@@ -1354,6 +1579,10 @@ func docxParseParas(data []byte) []docxParaData {
 			case "r":
 				flushText()
 				run = nil
+			case "del", "moveFrom":
+				if delDepth > 0 {
+					delDepth--
+				}
 			case "pPr":
 				inPPr = false
 			case "hyperlink":
@@ -1480,6 +1709,35 @@ func docxReadZip(r *zip.Reader, name string) ([]byte, error) {
 // importDocxVault converte src (.docx) in un vault nuovo e ne restituisce il Book.
 // Heading1/Title → nuovo capitolo, Heading2/3 → "## " nel capitolo.
 // Le immagini non vengono portate dentro (media separati dal manoscritto).
+// joinMarkdownParas unisce i paragrafi con righe vuote preservando i blocchi
+// di codice recintati (``` / ~~~), le cui righe vanno unite con un solo \n.
+func joinMarkdownParas(paras []string) string {
+	var out strings.Builder
+	inFence := false
+	for _, ln := range paras {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if out.Len() > 0 && !inFence {
+				out.WriteString("\n\n")
+			} else if out.Len() > 0 {
+				out.WriteString("\n")
+			}
+			out.WriteString(ln)
+			inFence = !inFence
+			continue
+		}
+		if out.Len() > 0 {
+			if inFence {
+				out.WriteString("\n")
+			} else {
+				out.WriteString("\n\n")
+			}
+		}
+		out.WriteString(ln)
+	}
+	return out.String()
+}
+
 func importDocxVault(src string) (*Book, error) {
 	zr, err := zip.OpenReader(src)
 	if err != nil {
@@ -1569,7 +1827,7 @@ func importDocxVault(src string) (*Book, error) {
 		name = "libro"
 	}
 	dest := filepath.Join(filepath.Dir(src), name+"-md")
-	for i := 2; fileExists(filepath.Join(dest, "book.yaml")); i++ {
+	for i := 2; fileExists(dest); i++ {
 		dest = filepath.Join(filepath.Dir(src), fmt.Sprintf("%s-md-%d", name, i))
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -1596,9 +1854,9 @@ func importDocxVault(src string) (*Book, error) {
 		id, _ := newUUID()
 		body := ""
 		if len(c.lines) > 0 {
-			body = strings.Join(c.lines, "\n\n") + "\n"
+			body = joinMarkdownParas(c.lines) + "\n"
 		}
-		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, t, body)
+		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, yamlScalar(t), body)
 		if err := os.WriteFile(filepath.Join(dest, file), []byte(md), 0o644); err != nil {
 			return nil, err
 		}
@@ -1621,7 +1879,7 @@ func importVellumVault(src string) (*Book, error) {
 		name = "libro"
 	}
 	dest := filepath.Join(filepath.Dir(src), name+"-md")
-	for i := 2; fileExists(filepath.Join(dest, "book.yaml")); i++ {
+	for i := 2; fileExists(dest); i++ {
 		dest = filepath.Join(filepath.Dir(src), fmt.Sprintf("%s-md-%d", name, i))
 	}
 	cmd := exec.Command(toolPath, "export-md", src, dest)
@@ -1637,22 +1895,149 @@ func importVellumVault(src string) (*Book, error) {
 	return b, nil
 }
 
+func copyDirFiles(srcDir, dstDir string) {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(dstDir, 0o755)
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		srcFile := filepath.Join(srcDir, e.Name())
+		dstFile := filepath.Join(dstDir, e.Name())
+		if isSameFile(srcFile, dstFile) {
+			continue
+		}
+		data, err := os.ReadFile(srcFile)
+		if err == nil {
+			_ = os.WriteFile(dstFile, data, 0o644)
+		}
+	}
+}
+
+func isSameFile(path1, path2 string) bool {
+	st1, err1 := os.Stat(path1)
+	st2, err2 := os.Stat(path2)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return os.SameFile(st1, st2)
+}
+
+func resolveAndCopyMarkdownImages(rawContent, parentDir, destDir string) string {
+	destImages := filepath.Join(destDir, "images")
+	_ = os.MkdirAll(destImages, 0o755)
+
+	srcImages := filepath.Join(parentDir, "images")
+	if st, err := os.Stat(srcImages); err == nil && st.IsDir() {
+		copyDirFiles(srcImages, destImages)
+	}
+
+	locateLocalImage := func(ref string) (string, string) {
+		cleanRef := strings.TrimSpace(ref)
+		if cleanRef == "" || isExternalURL(cleanRef) || strings.HasPrefix(cleanRef, "#") {
+			return "", ""
+		}
+		cleanRef = strings.Split(strings.Split(cleanRef, "?")[0], "#")[0]
+		baseName := filepath.Base(cleanRef)
+		if baseName == "." || baseName == "/" {
+			return "", ""
+		}
+		candidates := []string{
+			filepath.Join(parentDir, cleanRef),
+			filepath.Join(parentDir, filepath.Clean(cleanRef)),
+			filepath.Join(parentDir, "images", baseName),
+			filepath.Join(parentDir, baseName),
+		}
+		for _, cand := range candidates {
+			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+				return cand, baseName
+			}
+		}
+		return "", baseName
+	}
+
+	mdImgRe := regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)([^)]*)\)`)
+	content := mdImgRe.ReplaceAllStringFunc(rawContent, func(m string) string {
+		sub := mdImgRe.FindStringSubmatch(m)
+		if len(sub) < 4 {
+			return m
+		}
+		alt := sub[1]
+		ref := sub[2]
+		extra := sub[3]
+		srcPath, baseName := locateLocalImage(ref)
+		if srcPath != "" {
+			dstPath := filepath.Join(destImages, baseName)
+			if !fileExists(dstPath) {
+				data, err := os.ReadFile(srcPath)
+				if err == nil {
+					_ = os.WriteFile(dstPath, data, 0o644)
+				}
+			}
+			newRef := "images/" + baseName
+			return fmt.Sprintf("![%s](%s%s)", alt, newRef, extra)
+		}
+		if fileExists(filepath.Join(destImages, baseName)) {
+			newRef := "images/" + baseName
+			return fmt.Sprintf("![%s](%s%s)", alt, newRef, extra)
+		}
+		return m
+	})
+
+	htmlImgRe := regexp.MustCompile(`(?i)(<img\s+[^>]*src=["'])([^"'\s]+)(["'][^>]*>)`)
+	content = htmlImgRe.ReplaceAllStringFunc(content, func(m string) string {
+		sub := htmlImgRe.FindStringSubmatch(m)
+		if len(sub) < 4 {
+			return m
+		}
+		prefix := sub[1]
+		ref := sub[2]
+		suffix := sub[3]
+		srcPath, baseName := locateLocalImage(ref)
+		if srcPath != "" {
+			dstPath := filepath.Join(destImages, baseName)
+			if !fileExists(dstPath) {
+				data, err := os.ReadFile(srcPath)
+				if err == nil {
+					_ = os.WriteFile(dstPath, data, 0o644)
+				}
+			}
+			return prefix + "images/" + baseName + suffix
+		}
+		if fileExists(filepath.Join(destImages, baseName)) {
+			return prefix + "images/" + baseName + suffix
+		}
+		return m
+	})
+
+	return content
+}
+
 func importMarkdownVault(src string) (*Book, error) {
 	parentDir := filepath.Dir(src)
-	if fileExists(filepath.Join(parentDir, "book.yaml")) {
-		b, err := parseBookYAML(filepath.Join(parentDir, "book.yaml"))
-		if err == nil && b != nil {
-			setVault(parentDir)
-			return b, nil
+	// Se la cartella è già un libro, aprilo con i suoi metadati. Un book.yaml
+	// invalido va rifiutato: non deve essere rigenerato/sovrascritto.
+	if _, err := os.Stat(filepath.Join(parentDir, "book.yaml")); err == nil {
+		b, perr := parseBookYAML(filepath.Join(parentDir, "book.yaml"))
+		if perr != nil {
+			return nil, fmt.Errorf("book.yaml esiste ma non è valido; nessuna modifica effettuata: %w", perr)
 		}
+		setVault(parentDir)
+		populateChapterStats(b, parentDir)
+		return b, nil
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("impossibile verificare book.yaml: %w", err)
 	}
 
 	// Se la cartella del file contiene più capitoli markdown (o è la cartella del libro),
 	// apri l'intera cartella con tutti i capitoli anziché isolare il singolo file selezionato.
 	if !isSpecialUserDir(parentDir) {
 		if auto := autoInitVaultFromMarkdown(parentDir); auto != nil && len(auto.Chapters) > 1 {
-			_ = writeBookYAML(auto)
 			setVault(parentDir)
+			populateChapterStats(auto, parentDir)
 			return auto, nil
 		}
 	}
@@ -1697,7 +2082,7 @@ func importMarkdownVault(src string) (*Book, error) {
 		title = strings.ReplaceAll(title, "_", " ")
 		title = strings.TrimSpace(title)
 		if len(title) > 0 {
-			title = strings.ToUpper(title[:1]) + title[1:]
+			title = capitalizeFirst(title)
 		}
 	}
 
@@ -1706,7 +2091,7 @@ func importMarkdownVault(src string) (*Book, error) {
 		name = "libro"
 	}
 	dest := filepath.Join(filepath.Dir(src), name+"-md")
-	for i := 2; fileExists(filepath.Join(dest, "book.yaml")); i++ {
+	for i := 2; fileExists(dest); i++ {
 		dest = filepath.Join(filepath.Dir(src), fmt.Sprintf("%s-md-%d", name, i))
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -1714,6 +2099,11 @@ func importMarkdownVault(src string) (*Book, error) {
 	}
 	_ = os.MkdirAll(filepath.Join(dest, "cover"), 0o755)
 	_ = os.MkdirAll(filepath.Join(dest, "images"), 0o755)
+	if srcCover := filepath.Join(parentDir, "cover"); fileExists(srcCover) {
+		copyDirFiles(srcCover, filepath.Join(dest, "cover"))
+	}
+	raw = resolveAndCopyMarkdownImages(raw, parentDir, dest)
+	lines = strings.Split(raw, "\n")
 
 	type chData struct {
 		title string
@@ -1773,7 +2163,7 @@ func importMarkdownVault(src string) (*Book, error) {
 		file := fmt.Sprintf("%02d-%s.md", i+1, slugify(t))
 		id, _ := newUUID()
 		body := strings.Join(c.lines, "\n")
-		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, t, strings.TrimSpace(body))
+		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, yamlScalar(t), strings.TrimSpace(body))
 		if err := os.WriteFile(filepath.Join(dest, file), []byte(md), 0o644); err != nil {
 			return nil, err
 		}
@@ -1837,6 +2227,7 @@ func importOdtVault(src string) (*Book, error) {
 
 	dec := xml.NewDecoder(cf)
 	var inHeading, inPara bool
+	delDepth := 0
 	var currentText strings.Builder
 
 	for {
@@ -1852,13 +2243,40 @@ func importOdtVault(src string) (*Book, error) {
 			} else if t.Name.Local == "p" {
 				inPara = true
 				currentText.Reset()
+			} else if t.Name.Local == "deletion" {
+				// Testo eliminato (revisioni): non importarlo.
+				delDepth++
+			} else if (inHeading || inPara) && delDepth == 0 {
+				switch t.Name.Local {
+				case "line-break":
+					currentText.WriteString("\n")
+				case "tab":
+					currentText.WriteString("\t")
+				case "s":
+					nspaces := 1
+					for _, a := range t.Attr {
+						if a.Name.Local == "c" {
+							if n, err := strconv.Atoi(a.Value); err == nil && n > 0 {
+								nspaces = n
+							}
+						}
+					}
+					if nspaces > 64 {
+						nspaces = 64
+					}
+					currentText.WriteString(strings.Repeat(" ", nspaces))
+				}
 			}
 		case xml.CharData:
-			if inHeading || inPara {
+			if (inHeading || inPara) && delDepth == 0 {
 				currentText.WriteString(string(t))
 			}
 		case xml.EndElement:
-			if t.Name.Local == "h" && inHeading {
+			if t.Name.Local == "deletion" {
+				if delDepth > 0 {
+					delDepth--
+				}
+			} else if t.Name.Local == "h" && inHeading {
 				inHeading = false
 				hText := strings.TrimSpace(currentText.String())
 				if hText != "" {
@@ -1892,7 +2310,7 @@ func importOdtVault(src string) (*Book, error) {
 		title = strings.ReplaceAll(title, "_", " ")
 		title = strings.TrimSpace(title)
 		if len(title) > 0 {
-			title = strings.ToUpper(title[:1]) + title[1:]
+			title = capitalizeFirst(title)
 		}
 	}
 	name := slugify(base)
@@ -1900,7 +2318,7 @@ func importOdtVault(src string) (*Book, error) {
 		name = "libro"
 	}
 	dest := filepath.Join(filepath.Dir(src), name+"-md")
-	for i := 2; fileExists(filepath.Join(dest, "book.yaml")); i++ {
+	for i := 2; fileExists(dest); i++ {
 		dest = filepath.Join(filepath.Dir(src), fmt.Sprintf("%s-md-%d", name, i))
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -1927,8 +2345,8 @@ func importOdtVault(src string) (*Book, error) {
 		}
 		file := fmt.Sprintf("%02d-%s.md", i+1, slugify(t))
 		id, _ := newUUID()
-		body := strings.Join(c.paras, "\n\n") + "\n"
-		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, t, body)
+		body := joinMarkdownParas(c.paras) + "\n"
+		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, yamlScalar(t), body)
 		if err := os.WriteFile(filepath.Join(dest, file), []byte(md), 0o644); err != nil {
 			return nil, err
 		}
@@ -2067,14 +2485,14 @@ func importPdfVault(src string) (*Book, error) {
 	title = strings.ReplaceAll(title, "_", " ")
 	title = strings.TrimSpace(title)
 	if len(title) > 0 {
-		title = strings.ToUpper(title[:1]) + title[1:]
+		title = capitalizeFirst(title)
 	}
 	name := slugify(base)
 	if name == "" {
 		name = "libro"
 	}
 	dest := filepath.Join(filepath.Dir(src), name+"-md")
-	for i := 2; fileExists(filepath.Join(dest, "book.yaml")); i++ {
+	for i := 2; fileExists(dest); i++ {
 		dest = filepath.Join(filepath.Dir(src), fmt.Sprintf("%s-md-%d", name, i))
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -2101,8 +2519,8 @@ func importPdfVault(src string) (*Book, error) {
 		}
 		file := fmt.Sprintf("%02d-%s.md", i+1, slugify(t))
 		id, _ := newUUID()
-		body := strings.Join(c.paras, "\n\n") + "\n"
-		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, t, body)
+		body := joinMarkdownParas(c.paras) + "\n"
+		md := fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n%s", id, yamlScalar(t), body)
 		if err := os.WriteFile(filepath.Join(dest, file), []byte(md), 0o644); err != nil {
 			return nil, err
 		}
@@ -2117,33 +2535,46 @@ func importPdfVault(src string) (*Book, error) {
 }
 
 func importAnyManuscript(src string) (*Book, error) {
-	src = strings.TrimSpace(src)
+	src = filepath.Clean(strings.TrimSpace(src))
 	st, err := os.Stat(src)
 	if err != nil {
 		return nil, fmt.Errorf("file non trovato: %s", src)
 	}
 	if st.IsDir() {
+		if strings.HasSuffix(strings.ToLower(src), ".scriv") {
+			return importScrivenerVault(src)
+		}
 		yamlPath := filepath.Join(src, "book.yaml")
-		if fileExists(yamlPath) {
+		if _, statErr := os.Stat(yamlPath); statErr == nil {
 			b, err := parseBookYAML(yamlPath)
-			if err == nil && b != nil {
-				setVault(src)
-				return b, nil
+			if err != nil {
+				return nil, fmt.Errorf("book.yaml esiste ma non è valido; nessuna modifica effettuata: %w", err)
 			}
+			setVault(src)
+			populateChapterStats(b, src)
+			return b, nil
+		} else if !os.IsNotExist(statErr) {
+			return nil, fmt.Errorf("impossibile verificare book.yaml: %w", statErr)
 		}
 		if auto := autoInitVaultFromMarkdown(src); auto != nil {
-			_ = writeBookYAML(auto)
 			setVault(src)
+			populateChapterStats(auto, src)
 			return auto, nil
 		}
 		if entries, rErr := os.ReadDir(src); rErr == nil {
 			var manus []string
 			for _, e := range entries {
-				if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				le := strings.ToLower(filepath.Ext(e.Name()))
+				if e.IsDir() {
+					if le == ".scriv" {
+						manus = append(manus, filepath.Join(src, e.Name()))
+					}
 					continue
 				}
-				le := strings.ToLower(filepath.Ext(e.Name()))
-				if le == ".docx" || le == ".odt" || le == ".pdf" || le == ".vellum" {
+				if strings.HasPrefix(e.Name(), ".") {
+					continue
+				}
+				if le == ".docx" || le == ".odt" || le == ".pdf" || le == ".vellum" || le == ".scriv" || le == ".scrivx" || le == ".scrivtemplate" {
 					manus = append(manus, filepath.Join(src, e.Name()))
 				}
 			}
@@ -2155,23 +2586,45 @@ func importAnyManuscript(src string) (*Book, error) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(src))
+	var b *Book
 	switch ext {
 	case ".docx":
-		return importDocxVault(src)
+		b, err = importDocxVault(src)
 	case ".vellum":
-		return importVellumVault(src)
+		b, err = importVellumVault(src)
 	case ".md", ".markdown":
-		return importMarkdownVault(src)
+		b, err = importMarkdownVault(src)
 	case ".odt":
-		return importOdtVault(src)
+		b, err = importOdtVault(src)
 	case ".pdf":
-		return importPdfVault(src)
+		b, err = importPdfVault(src)
+	case ".scriv", ".scrivx", ".scrivtemplate":
+		b, err = importScrivenerVault(src)
+	case ".zip":
+		if isScrivenerZip(src) {
+			b, err = importScrivenerVault(src)
+		} else {
+			return nil, fmt.Errorf("archivio zip non riconosciuto (deve contenere un progetto Scrivener)")
+		}
 	default:
-		return nil, fmt.Errorf("formato '%s' non supportato. Formati supportati: .docx, .vellum, .md, .odt, .pdf", ext)
+		return nil, fmt.Errorf("formato '%s' non supportato. Formati supportati: .docx, .scriv, .vellum, .md, .odt, .pdf", ext)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if b != nil {
+		vDir := getVaultDir()
+		if vDir != "" {
+			populateChapterStats(b, vDir)
+		}
+	}
+	return b, nil
 }
 
 func apiImportManuscript(w http.ResponseWriter, r *http.Request) {
+	if !requireNoDirtyClient(w) {
+		return
+	}
 	var req struct {
 		File  string   `json:"file"`
 		Dir   string   `json:"dir"`
@@ -2188,7 +2641,7 @@ func apiImportManuscript(w http.ResponseWriter, r *http.Request) {
 		if len(req.Files) == 1 {
 			singleExt := strings.ToLower(filepath.Ext(req.Files[0]))
 			if singleExt != ".md" && singleExt != ".markdown" {
-				fullSingle := filepath.Join(req.Dir, req.Files[0])
+				fullSingle := filepath.Join(req.Dir, filepath.Base(req.Files[0]))
 				b, err := importAnyManuscript(fullSingle)
 				if err != nil {
 					jsonErrWithDiag(w, 500, err.Error(), "import", "IMPORT_FAILED", "apiImportManuscript")
@@ -2224,6 +2677,9 @@ func apiImportManuscript(w http.ResponseWriter, r *http.Request) {
 }
 
 func apiImportDocx(w http.ResponseWriter, r *http.Request) {
+	if !requireNoDirtyClient(w) {
+		return
+	}
 	var req struct {
 		File string `json:"file"`
 	}
@@ -2245,6 +2701,9 @@ func apiImportDocx(w http.ResponseWriter, r *http.Request) {
 }
 
 func apiImport(w http.ResponseWriter, r *http.Request) {
+	if !requireNoDirtyClient(w) {
+		return
+	}
 	var req struct {
 		File string `json:"file"`
 	}
@@ -2272,9 +2731,57 @@ func loadBookOrNull() *Book {
 	return loadBook()
 }
 
+func isMarkdownFile(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext == ".md" || ext == ".markdown"
+}
+
+// containedFile risolve name dentro dir impedendo fughe dal contenitore,
+// incluse quelle tramite collegamenti simbolici piantati nella cartella
+// (es. book.yaml ricevuto da terzi con "file: link.md" dove link.md è un
+// symlink verso /etc/passwd). Restituisce il percorso d'accesso dopo aver
+// verificato che anche il percorso risolto resti dentro dir. I file assenti
+// sono ammessi (verifica sulla genitrice) per permetterne la gestione.
+func containedFile(dir, name string, mustMarkdown bool) (string, error) {
+	if name == "" || name == "." || name == ".." || filepath.IsAbs(name) {
+		return "", fmt.Errorf("nome non valido")
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("nome non valido")
+	}
+	if mustMarkdown && !isVaultChapterName(name) {
+		return "", fmt.Errorf("capitolo non valido")
+	}
+	if !mustMarkdown && (strings.HasPrefix(name, ".") || !strings.EqualFold(filepath.Ext(name), ".md")) {
+		return "", fmt.Errorf("nome nota non valido")
+	}
+	full := filepath.Join(dir, name)
+	if rel, err := filepath.Rel(dir, full); err != nil || rel != name {
+		return "", fmt.Errorf("percorso fuori dal contenitore")
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	var real string
+	if _, err := os.Lstat(full); err == nil {
+		if r, err := filepath.EvalSymlinks(full); err == nil {
+			real = r
+		} else {
+			return "", err
+		}
+	} else {
+		real = filepath.Join(realDir, name)
+	}
+	if rel, err := filepath.Rel(realDir, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("percorso fuori dal contenitore")
+	}
+	return full, nil
+}
+
 func safeChapter(w http.ResponseWriter, r *http.Request) string {
 	name := filepath.Base(strings.TrimSpace(r.URL.Query().Get("file")))
-	if name == "" || name == "." || !strings.HasSuffix(name, ".md") {
+	if name == "" || name == "." || !isMarkdownFile(name) {
 		return ""
 	}
 	return name
@@ -2291,7 +2798,12 @@ func apiChapter(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "Nessun vault aperto")
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(vDir, name))
+	full, ferr := containedFile(vDir, name, true)
+	if ferr != nil {
+		jsonErr(w, 400, "Capitolo non valido")
+		return
+	}
+	data, err := os.ReadFile(full)
 	if err != nil {
 		jsonErr(w, 404, "Non riesco a leggere "+name)
 		return
@@ -2318,7 +2830,7 @@ func apiSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := filepath.Base(strings.TrimSpace(req.File))
-	if name == "" || name == "." || !strings.HasSuffix(name, ".md") {
+	if name == "" || name == "." || !isMarkdownFile(name) {
 		jsonErrWithDiag(w, 400, "Capitolo non valido", "save", "INVALID_CHAPTER", "apiSave")
 		return
 	}
@@ -2332,7 +2844,11 @@ func apiSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(vDir, name)
+	fullPath, ferr := containedFile(vDir, name, true)
+	if ferr != nil {
+		jsonErrWithDiag(w, 400, "Capitolo non valido", "save", "INVALID_CHAPTER", "apiSave")
+		return
+	}
 	st, err := os.Stat(fullPath)
 	if err != nil || st.IsDir() {
 		jsonErrWithDiag(w, 404, "Il capitolo non esiste: "+name, "save", "CHAPTER_NOT_FOUND", "apiSave")
@@ -2361,10 +2877,17 @@ func apiSave(w http.ResponseWriter, r *http.Request) {
 	}
 	invalidateVaultFingerprint()
 	broadcastWatchChange()
-	writeJSON(w, map[string]interface{}{"ok": true, "version": chapterVersion([]byte(req.Content))})
+	wCount, sumText, stVal := parseChapterWordsAndSummary([]byte(req.Content))
+	writeJSON(w, map[string]interface{}{
+		"ok":      true,
+		"version": chapterVersion([]byte(req.Content)),
+		"words":   wCount,
+		"summary": sumText,
+		"status":  stVal,
+	})
 }
 
-var reservedFiles = map[string]bool{"book.md": true}
+var reservedFiles = map[string]bool{"book.md": true, "book.markdown": true}
 
 func apiNewChapter(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -2372,6 +2895,7 @@ func apiNewChapter(w http.ResponseWriter, r *http.Request) {
 		Type     string `json:"type"`
 		Position string `json:"position"` // "start" | "end" | "after-current"
 		After    string `json:"after"`    // capitolo attivo dopo cui inserire
+		Summary  string `json:"summary"`  // sinossi/promemoria capitolo
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
 		jsonErr(w, 400, "Serve un titolo")
@@ -2399,38 +2923,90 @@ func apiNewChapter(w http.ResponseWriter, r *http.Request) {
 	var file string
 	var md string
 	id, _ := newUUID()
+	summary := strings.TrimSpace(req.Summary)
+	var summaryLine string
+	if summary != "" {
+		summaryLine = fmt.Sprintf("summary: %s\n", yamlScalar(summary))
+	}
 
 	switch chType {
+	case "copyright":
+		file = "00-colophon.md"
+		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
+			file = fmt.Sprintf("00-colophon-%d.md", i+2)
+		}
+		year := time.Now().Year()
+		author := b.Author
+		if author == "" {
+			author = "Tutti i diritti riservati"
+		}
+		bookTitle := b.Title
+		if bookTitle == "" {
+			bookTitle = "Titolo Opera"
+		}
+		md = fmt.Sprintf(`---
+id: %s
+title: %s
+type: copyright
+%s---
+
+<div class="colophon">
+
+**%s**  
+di %s
+
+© %d %s. Tutti i diritti riservati.
+
+Nessuna parte di questa pubblicazione può essere riprodotta, memorizzata o trasmessa in alcuna forma o con alcun mezzo senza il preventivo consenso scritto dell'editore.
+
+Prima edizione: %d  
+ISBN: 978-0-000000-0-0  
+Composto e impaginato con PubCraft.
+
+</div>
+`, id, title, summaryLine, bookTitle, author, year, author, year)
 	case "dedication":
 		file = "00-dedica.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-dedica-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: dedication\n---\n\n*A chi crede nella forza delle parole.*\n", id, title)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: dedication\n%s---\n\n*A chi crede nella forza delle parole.*\n", id, title, summaryLine)
 	case "epigraph":
 		file = "00-epigrafe.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-epigrafe-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epigraph\n---\n\n> Non c'è vento favorevole per il marinaio che non sa dove andare.\n> — Lucio Anneo Seneca\n", id, title)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epigraph\n%s---\n\n> Non c'è vento favorevole per il marinaio che non sa dove andare.\n> — Lucio Anneo Seneca\n", id, title, summaryLine)
+	case "prologue":
+		file = "00-prologo.md"
+		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
+			file = fmt.Sprintf("00-prologo-%d.md", i+2)
+		}
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: prologue\n%s---\n\nTutto ebbe inizio prima che il tempo stesso ne conservasse memoria...\n", id, title, summaryLine)
+	case "epilogue":
+		file = "90-epilogo.md"
+		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
+			file = fmt.Sprintf("90-epilogo-%d.md", i+2)
+		}
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epilogue\n%s---\n\nQuando la polvere si posò, restava soltanto il silenzio.\n", id, title, summaryLine)
 	case "about-author":
 		file = "99-sull-autore.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("99-sull-autore-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: about-author\n---\n\n**Nome Autore** è scrittore e divulgatore.\n\nVive e lavora tra la scrittura e la ricerca.\n", id, title)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: about-author\n%s---\n\n**Nome Autore** è scrittore e divulgatore.\n\nVive e lavora tra la scrittura e la ricerca.\n", id, title, summaryLine)
 	case "acknowledgments":
 		file = "98-ringraziamenti.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("98-ringraziamenti-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: acknowledgments\n---\n\nDesidero ringraziare di cuore tutti coloro che hanno reso possibile la nascita di questo libro.\n", id, title)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: acknowledgments\n%s---\n\nDesidero ringraziare di cuore tutti coloro che hanno reso possibile la nascita di questo libro.\n", id, title, summaryLine)
 	case "preface":
 		file = "00-prefazione.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-prefazione-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: preface\n---\n\nQuesto testo nasce dall'esigenza di esplorare...\n", id, title)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: preface\n%s---\n\nQuesto testo nasce dall'esigenza di esplorare...\n", id, title, summaryLine)
 	default:
 		// Capitolo ordinario: prossimo numero 01, 02, …
 		max := 0
@@ -2444,20 +3020,20 @@ func apiNewChapter(w http.ResponseWriter, r *http.Request) {
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("%02d-%s-%d.md", max+1, slug, i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\n---\n\n", id, title)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\nstatus: bozza\n%s---\n\n", id, title, summaryLine)
 	}
 
 	if err := os.WriteFile(filepath.Join(vDir, file), []byte(md), 0o644); err != nil {
 		jsonErr(w, 500, "Creazione fallita: "+err.Error())
 		return
 	}
-	newCh := Chapter{File: file, ID: id, Title: title, Type: chType}
+	newCh := Chapter{File: file, ID: id, Title: title, Type: chType, Summary: summary, Status: "bozza"}
 
 	pos := req.Position
 	if pos == "" {
-		if chType == "dedication" || chType == "epigraph" || chType == "preface" {
+		if chType == "copyright" || chType == "dedication" || chType == "epigraph" || chType == "preface" || chType == "prologue" {
 			pos = "start"
-		} else if chType == "about-author" || chType == "acknowledgments" {
+		} else if chType == "about-author" || chType == "acknowledgments" || chType == "epilogue" {
 			pos = "end"
 		} else if req.After != "" {
 			pos = "after-current"
@@ -2492,6 +3068,7 @@ func apiNewChapter(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "Aggiornamento book.yaml fallito: "+err.Error())
 		return
 	}
+	populateChapterStats(b, vDir)
 	invalidateVaultFingerprint()
 	broadcastWatchChange()
 	writeJSON(w, map[string]any{"ok": true, "file": file, "book": b})
@@ -2534,9 +3111,30 @@ func apiReorder(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "Salvataggio book.yaml fallito: "+err.Error())
 		return
 	}
+	populateChapterStats(b, getVaultDir())
 	invalidateVaultFingerprint()
 	broadcastWatchChange()
 	writeJSON(w, map[string]any{"ok": true, "book": b})
+}
+
+func moveToTrash(vDir, name, srcPath string) error {
+	dst := filepath.Join(vDir, ".cestina")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	trashPath := filepath.Join(dst, name)
+	if fileExists(trashPath) {
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		for i := 2; ; i++ {
+			cand := filepath.Join(dst, fmt.Sprintf("%s-%d%s", base, i, ext))
+			if !fileExists(cand) {
+				trashPath = cand
+				break
+			}
+		}
+	}
+	return os.Rename(srcPath, trashPath)
 }
 
 func apiDeleteChapter(w http.ResponseWriter, r *http.Request) {
@@ -2548,7 +3146,7 @@ func apiDeleteChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := filepath.Base(strings.TrimSpace(req.File))
-	if name == "" || name == "." || !strings.HasSuffix(name, ".md") {
+	if name == "" || name == "." || !isMarkdownFile(name) {
 		jsonErr(w, 400, "Capitolo non valido")
 		return
 	}
@@ -2563,19 +3161,23 @@ func apiDeleteChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Conferma lato client: qui eliminiamo davvero (file nella "cestina").
-	del := filepath.Join(vDir, name)
+	del, ferr := containedFile(vDir, name, true)
+	if ferr != nil {
+		jsonErr(w, 400, "Capitolo non valido")
+		return
+	}
 	st, err := os.Stat(del)
-	if err != nil || st.IsDir() {
-		jsonErr(w, 404, "Capitolo inesistente")
+	if err == nil && !st.IsDir() {
+		// Sposto nel cestino locale .cestina evitando sovrascritture di file eliminati in precedenza.
+		if err := moveToTrash(vDir, name, del); err != nil {
+			jsonErr(w, 500, "Impossibile spostare: "+err.Error())
+			return
+		}
+	} else if err == nil && st.IsDir() {
+		jsonErr(w, 400, "Capitolo non valido")
 		return
 	}
-	// Sposto nel cestino locale .cestina
-	dst := filepath.Join(vDir, ".cestina")
-	_ = os.MkdirAll(dst, 0o755)
-	if err := os.Rename(del, filepath.Join(dst, name)); err != nil {
-		jsonErr(w, 500, "Impossibile spostare: "+err.Error())
-		return
-	}
+	// Se il file manca già dal disco, rimuovi comunque la voce da book.yaml.
 	for i, c := range b.Chapters {
 		if c.File == name {
 			b.Chapters = append(b.Chapters[:i], b.Chapters[i+1:]...)
@@ -2586,6 +3188,7 @@ func apiDeleteChapter(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "Aggiornamento book.yaml fallito: "+err.Error())
 		return
 	}
+	populateChapterStats(b, vDir)
 	invalidateVaultFingerprint()
 	broadcastWatchChange()
 	writeJSON(w, map[string]any{"ok": true, "book": b})
@@ -2628,6 +3231,12 @@ func apiBuild(w http.ResponseWriter, r *http.Request) {
 	b, bookErr := parseBookYAML(filepath.Join(vDir, "book.yaml"))
 	if bookErr != nil {
 		jsonErrWithDiag(w, 400, "Metadati del libro non validi", "export", "INVALID_BOOK", "apiBuild")
+		return
+	}
+	// L'identificatore di pubblicazione deve essere persistito prima di ogni
+	// build (EPUB o stampa) ed essere stabile tra build e anteprime.
+	if err := ensureBookUUID(vDir, b); err != nil {
+		jsonErrWithDiag(w, 500, "Impossibile rendere stabile l'identificatore del libro: "+err.Error(), "export", "UUID_PERSIST_FAILED", "apiBuild")
 		return
 	}
 	name := printName(b)
@@ -3008,30 +3617,109 @@ func apiAddCover(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "File non trovato: "+src)
 		return
 	}
+	// Le copertine sono immagini o PDF: rifiuta eseguibili, archivi e simili,
+	// con un tetto di 100 MB copiato in streaming (niente ReadFile integrale).
+	const maxCoverBytes = 100 << 20
+	if st.Size() > maxCoverBytes {
+		jsonErr(w, http.StatusRequestEntityTooLarge, "File troppo grande per la copertina (max 100MB)")
+		return
+	}
+	name := filepath.Base(src)
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(name), ".")) {
+	case "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "bmp", "heic", "heif", "pdf", "psd", "ai":
+		// formati ammessi
+	default:
+		jsonErr(w, 400, "Formato non adatto a una copertina (ammessi: JPG, PNG, GIF, WEBP, TIFF, BMP, HEIC, PDF, PSD, AI)")
+		return
+	}
 	if err := os.MkdirAll(coverDir(), 0o755); err != nil {
 		jsonErr(w, 500, "Impossibile creare cover/: "+err.Error())
 		return
 	}
-	name := filepath.Base(src)
 	if ext := filepath.Ext(name); ext != "" {
 		base := strings.TrimSuffix(name, ext)
 		for i := 2; fileExists(filepath.Join(coverDir(), name)); i++ {
 			name = fmt.Sprintf("%s-%d%s", base, i, ext)
 		}
+	} else {
+		for i := 2; fileExists(filepath.Join(coverDir(), name)); i++ {
+			name = fmt.Sprintf("%s-%d", name, i)
+		}
 	}
-	if err := copyFile(src, filepath.Join(coverDir(), name)); err != nil {
-		jsonErr(w, 500, "Copia fallita: "+err.Error())
+	if err := copyFileLimit(src, filepath.Join(coverDir(), name), maxCoverBytes); err != nil {
+		if strings.Contains(err.Error(), "troppo grande") {
+			jsonErr(w, http.StatusRequestEntityTooLarge, err.Error())
+		} else {
+			jsonErr(w, 500, "Copia fallita: "+err.Error())
+		}
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "name": name, "covers": listCovers()})
 }
 
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+// copyFileLimit copia src in dst in streaming con un tetto massimo di byte.
+func copyFileLimit(src, dst string, maxBytes int64) error {
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o644)
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	written, err := io.Copy(out, io.LimitReader(in, maxBytes+1))
+	if err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	if written > maxBytes {
+		_ = os.Remove(dst)
+		return fmt.Errorf("file troppo grande (limite %d MB)", maxBytes>>20)
+	}
+	return out.Sync()
+}
+
+func copyFile(src, dst string) error {
+	return copyFileLimit(src, dst, 1<<62)
+}
+
+// sameFileContent confronta due file per dimensione e hash (riuso copertine).
+func sameFileContent(a, b string) (bool, error) {
+	sta, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	stb, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	if sta.IsDir() || stb.IsDir() || sta.Size() != stb.Size() {
+		return false, nil
+	}
+	ha, err := fileSHA256(a)
+	if err != nil {
+		return false, err
+	}
+	hb, err := fileSHA256(b)
+	if err != nil {
+		return false, err
+	}
+	return ha == hb, nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func cleanImageSlug(s string) string {
@@ -3241,9 +3929,7 @@ func apiDelCover(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 404, "File inesistente")
 		return
 	}
-	dst := filepath.Join(getVaultDir(), ".cestina")
-	_ = os.MkdirAll(dst, 0o755)
-	if err := os.Rename(src, filepath.Join(dst, name)); err != nil {
+	if err := moveToTrash(getVaultDir(), name, src); err != nil {
 		jsonErr(w, 500, "Impossibile spostare: "+err.Error())
 		return
 	}
@@ -3322,35 +4008,54 @@ func apiUseAsEpubCover(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, "Impossibile creare images/: "+err.Error())
 		return
 	}
+	// Se lo stesso file esiste gia' in images/, riutilizzalo (niente duplicati).
+	srcCover := filepath.Join(coverDir(), name)
 	dst := filepath.Join(images, name)
-	if ext := filepath.Ext(name); ext != "" {
+	reuse := false
+	if same, _ := sameFileContent(srcCover, dst); same {
+		reuse = true
+	} else if ext := filepath.Ext(name); ext != "" {
 		base := strings.TrimSuffix(name, ext)
 		for i := 2; fileExists(dst); i++ {
 			dst = filepath.Join(images, fmt.Sprintf("%s-%d%s", base, i, ext))
 		}
 	}
-	if err := copyFile(filepath.Join(coverDir(), name), dst); err != nil {
-		jsonErr(w, 500, "Copia in images/ fallita: "+err.Error())
-		return
+	if !reuse {
+		if err := copyFile(srcCover, dst); err != nil {
+			jsonErr(w, 500, "Copia in images/ fallita: "+err.Error())
+			return
+		}
 	}
 	imgName := filepath.Base(dst)
-	// Capitolo 00-copertina: solo il riferimento all'immagine.
+	imgRef := "images/" + imgName
+	// Capitolo 00-copertina: se esiste gia' con contenuto personalizzato,
+	// aggiorna solo il riferimento all'immagine invece di sovrascriverlo.
 	coverFile := "00-copertina.md"
-	id, _ := newUUID()
-	md := fmt.Sprintf("---\nid: %s\ntitle: Copertina\n---\n\n![](images/%s)\n", id, imgName)
-	if err := os.WriteFile(filepath.Join(vDir, coverFile), []byte(md), 0o644); err != nil {
-		jsonErr(w, 500, "Creazione 00-copertina.md fallita: "+err.Error())
-		return
+	coverPath := filepath.Join(vDir, coverFile)
+	if data, err := os.ReadFile(coverPath); err == nil {
+		if updated := updateCoverImageRef(string(data), imgRef); updated != "" {
+			if err := atomicWriteFile(coverPath, []byte(updated), 0o644); err != nil {
+				jsonErr(w, 500, "Aggiornamento 00-copertina.md fallito: "+err.Error())
+				return
+			}
+		}
+	} else {
+		id, _ := newUUID()
+		md := fmt.Sprintf("---\nid: %s\ntitle: Copertina\n---\n\n![](%s)\n", id, imgRef)
+		if err := atomicWriteFile(coverPath, []byte(md), 0o644); err != nil {
+			jsonErr(w, 500, "Creazione 00-copertina.md fallita: "+err.Error())
+			return
+		}
 	}
 	found := false
-	for i, c := range b.Chapters {
+	for _, c := range b.Chapters {
 		if c.File == coverFile {
-			b.Chapters[i] = Chapter{File: coverFile, ID: id, Title: "Copertina"}
 			found = true
 			break
 		}
 	}
 	if !found {
+		id, _ := newUUID()
 		b.Chapters = append([]Chapter{{File: coverFile, ID: id, Title: "Copertina"}}, b.Chapters...)
 	}
 	if err := writeBookYAML(b); err != nil {
@@ -3358,6 +4063,62 @@ func apiUseAsEpubCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "book": b})
+}
+
+// updateCoverImageRef sostituisce il primo riferimento immagine (markdown o
+// <img>) con imgRef; se non ce n'e' uno, lo inserisce dopo il frontmatter.
+// Restituisce "" se il riferimento e' gia' quello giusto (niente da fare).
+func updateCoverImageRef(md, imgRef string) string {
+	if strings.Contains(md, "]("+imgRef+")") {
+		return ""
+	}
+	mdImgRe := regexp.MustCompile("!\\[[^\\]]*\\]\\(([^)\\s]+)[^)]*\\)")
+	if loc := mdImgRe.FindStringIndex(md); loc != nil {
+		return md[:loc[0]] + "![](" + imgRef + ")" + md[loc[1]:]
+	}
+	htmlImgRe := regexp.MustCompile("(?i)(<img\\s+[^>]*src=[\"'])([^\"'\\s]+)([\"'])")
+	if loc := htmlImgRe.FindStringSubmatchIndex(md); loc != nil && len(loc) >= 8 {
+		return md[:loc[4]] + imgRef + md[loc[5]:]
+	}
+	if stripped, rest, ok := splitFrontmatter(md); ok {
+		sep := "\n"
+		if strings.HasPrefix(rest, "\r\n") {
+			sep = "\r\n"
+			rest = rest[2:]
+		} else {
+			rest = strings.TrimPrefix(rest, "\n")
+		}
+		return stripped + sep + "![](" + imgRef + ")" + sep + rest
+	}
+	return "![](" + imgRef + ")\n\n" + md
+}
+
+// splitFrontmatter divide "---...---" iniziale dal corpo. Riconosce solo il
+// frontmatter a inizio documento (le righe --- nel corpo non contano).
+func splitFrontmatter(s string) (head, body string, ok bool) {
+	rest := s
+	if strings.HasPrefix(rest, "\xef\xbb\xbf") {
+		rest = rest[3:]
+	}
+	var inner string
+	if strings.HasPrefix(rest, "---\r\n") {
+		inner = rest[len("---\r\n"):]
+	} else if strings.HasPrefix(rest, "---\n") {
+		inner = rest[len("---\n"):]
+	} else {
+		return "", "", false
+	}
+	idx := strings.Index(inner, "\n---")
+	if idx == -1 {
+		return "", "", false
+	}
+	end := idx + len("\n---")
+	return rest[:len(rest)-len(inner)+end], inner[end:], true
+}
+
+// stripBOM rimuove l'eventuale Byte Order Mark a inizio testo.
+func stripBOM(s string) string {
+	return strings.TrimPrefix(s, "\xef\xbb\xbf")
 }
 
 // apiOpenCover apre il file di copertina con l'applicazione predefinita.
@@ -3578,19 +4339,12 @@ func apiStats(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "Nessun libro aperto")
 		return
 	}
+	// Usa gli stessi conteggi di populateChapterStats (sidebar): una logica
+	// separata di stripping del frontmatter divergeva (es. HR scambiate per
+	// chiusura frontmatter).
 	words := 0
 	for _, c := range b.Chapters {
-		data, err := os.ReadFile(filepath.Join(vDir, c.File))
-		if err != nil {
-			continue
-		}
-		body := string(data)
-		if i := strings.Index(body, "\n---"); i >= 0 && strings.HasPrefix(body, "---") {
-			if j := strings.Index(body[i+1:], "\n---"); j >= 0 {
-				body = body[i+1+j+len("\n---"):]
-			}
-		}
-		words += len(strings.Fields(body))
+		words += c.Words
 	}
 	// 6x9 @11pt ≈ 300 parole/pagina + ~5 pagine di apparato (front/indice)
 	pages := words/300 + 5
@@ -4469,6 +5223,136 @@ func apiSetTitle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "book": b})
 }
 
+func updateMarkdownTitleInContent(content, newTitle string) string {
+	bom := ""
+	if strings.HasPrefix(content, "\xef\xbb\xbf") {
+		bom = "\xef\xbb\xbf"
+		content = content[3:]
+	}
+	out := updateMarkdownTitleNoBOM(content, newTitle)
+	return bom + out
+}
+
+func updateMarkdownTitleNoBOM(content, newTitle string) string {
+	lines := strings.Split(content, "\n")
+	firstNonEmpty := -1
+	for idx, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			firstNonEmpty = idx
+			break
+		}
+	}
+	if firstNonEmpty >= 0 && strings.TrimSpace(lines[firstNonEmpty]) == "---" {
+		fmTitleFound := false
+		for i := firstNonEmpty + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if trimmed == "---" {
+				if !fmTitleFound {
+					var newLines []string
+					newLines = append(newLines, lines[:i]...)
+					newLines = append(newLines, fmt.Sprintf("title: %q", newTitle))
+					newLines = append(newLines, lines[i:]...)
+					return strings.Join(newLines, "\n")
+				}
+				return strings.Join(lines, "\n")
+			}
+			if k, _, ok := cutKV(trimmed); ok && k == "title" {
+				lines[i] = fmt.Sprintf("title: %q", newTitle)
+				fmTitleFound = true
+			}
+		}
+	}
+	// Se non c'è frontmatter (o non è chiuso), aggiorna il primo heading # a inizio documento
+	for i, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "# ") {
+			lines[i] = "# " + newTitle
+			return strings.Join(lines, "\n")
+		}
+		if trimmed != "" {
+			break
+		}
+	}
+	return content
+}
+
+func apiSetChapterTitle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File  string `json:"file"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, "Richiesta non valida")
+		return
+	}
+	req.File = filepath.Base(strings.TrimSpace(req.File))
+	req.Title = strings.TrimSpace(req.Title)
+	if req.File == "" || !isMarkdownFile(req.File) {
+		jsonErr(w, 400, "Nome file capitolo non valido")
+		return
+	}
+	if req.Title == "" {
+		jsonErr(w, 400, "Il titolo non può essere vuoto")
+		return
+	}
+	vDir := getVaultDir()
+	if vDir == "" {
+		jsonErr(w, 400, "Nessun libro aperto")
+		return
+	}
+	b := loadBook()
+	if b == nil {
+		jsonErr(w, 400, "Nessun libro aperto")
+		return
+	}
+	found := false
+	for i := range b.Chapters {
+		if b.Chapters[i].File == req.File {
+			b.Chapters[i].Title = req.Title
+			found = true
+			break
+		}
+	}
+	if !found {
+		jsonErr(w, 404, "Capitolo non trovato nel libro")
+		return
+	}
+	if err := writeBookYAML(b); err != nil {
+		jsonErr(w, 500, "Salvataggio book.yaml fallito: "+err.Error())
+		return
+	}
+	fullPath, ferr := containedFile(vDir, req.File, true)
+	if ferr != nil {
+		jsonErr(w, 400, "Nome file capitolo non valido")
+		return
+	}
+	var newVersion string
+	var newContent string
+	if data, err := os.ReadFile(fullPath); err == nil {
+		updated := updateMarkdownTitleInContent(string(data), req.Title)
+		if updated != string(data) {
+			if st, err := os.Stat(fullPath); err == nil {
+				_ = atomicWriteFile(fullPath, []byte(updated), st.Mode().Perm())
+			}
+			newContent = updated
+			newVersion = chapterVersion([]byte(updated))
+		} else {
+			newContent = string(data)
+			newVersion = chapterVersion(data)
+		}
+	}
+	populateChapterStats(b, vDir)
+	invalidateVaultFingerprint()
+	broadcastWatchChange()
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"book":    b,
+		"file":    req.File,
+		"version": newVersion,
+		"content": newContent,
+	})
+}
+
 type NoteInfo struct {
 	ID        string `json:"id"`
 	File      string `json:"file"`
@@ -4490,7 +5374,7 @@ func getNotesDir() (string, error) {
 }
 
 func parseNoteContent(raw string, fallbackFileName string) (string, string) {
-	text := strings.ReplaceAll(raw, "\r\n", "\n")
+	text := stripBOM(strings.ReplaceAll(raw, "\r\n", "\n"))
 	text = strings.ReplaceAll(text, "\r", "\n")
 
 	// Riconosciamo il blocco frontmatter solo se inizia con riga isolata "---"
@@ -4566,7 +5450,7 @@ func apiListNotes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"notes": []NoteInfo{}})
 		return
 	}
-	var notes []NoteInfo
+	notes := []NoteInfo{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
 			continue
@@ -4583,8 +5467,8 @@ func apiListNotes(w http.ResponseWriter, r *http.Request) {
 		raw := string(data)
 		noteTitle, previewText := parseNoteContent(raw, e.Name())
 		previewText = strings.ReplaceAll(previewText, "\n", " ")
-		if len(previewText) > 80 {
-			previewText = previewText[:80] + "…"
+		if r := []rune(previewText); len(r) > 80 {
+			previewText = string(r[:80]) + "…"
 		}
 		notes = append(notes, NoteInfo{
 			ID:        e.Name(),
@@ -4602,7 +5486,7 @@ func apiListNotes(w http.ResponseWriter, r *http.Request) {
 
 func apiGetNote(w http.ResponseWriter, r *http.Request) {
 	fileName := filepath.Base(strings.TrimSpace(r.URL.Query().Get("file")))
-	if fileName == "" || !strings.HasSuffix(fileName, ".md") {
+	if fileName == "" || !strings.EqualFold(filepath.Ext(fileName), ".md") {
 		jsonErr(w, 400, "Nome file nota non valido")
 		return
 	}
@@ -4611,7 +5495,11 @@ func apiGetNote(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err.Error())
 		return
 	}
-	filePath := filepath.Join(nd, fileName)
+	filePath, ferr := containedFile(nd, fileName, false)
+	if ferr != nil {
+		jsonErr(w, 400, "Nome file nota non valido")
+		return
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		jsonErr(w, 404, "Nota non trovata: "+fileName)
@@ -4650,7 +5538,7 @@ func apiSaveNote(w http.ResponseWriter, r *http.Request) {
 	}
 	fileName := filepath.Base(strings.TrimSpace(req.File))
 	isNew := false
-	if fileName == "" || fileName == "." || !strings.HasSuffix(fileName, ".md") {
+	if fileName == "" || fileName == "." || !strings.EqualFold(filepath.Ext(fileName), ".md") {
 		isNew = true
 		slug := slugify(title)
 		if slug == "" {
@@ -4661,14 +5549,24 @@ func apiSaveNote(w http.ResponseWriter, r *http.Request) {
 			fileName = fmt.Sprintf("%s-%d.md", slug, i)
 		}
 	}
-	filePath := filepath.Join(nd, fileName)
+	filePath, ferr := containedFile(nd, fileName, false)
+	if ferr != nil {
+		jsonErr(w, 400, "Nome file nota non valido")
+		return
+	}
 
-	// Controllo conflitti di concorrenza se il file esiste già
+	// Controllo conflitti di concorrenza se il file esiste già. Come per i
+	// capitoli, la versione di partenza è obbligatoria: senza, una seconda
+	// scheda o un editor esterno verrebbero sovrascritti in silenzio.
 	if !isNew && fileExists(filePath) {
+		if !req.Force && strings.TrimSpace(req.BaseVersion) == "" {
+			jsonErrWithDiag(w, http.StatusPreconditionRequired, "Versione di partenza mancante: ricarica la nota", "note", "VERSION_MISSING", "apiSaveNote")
+			return
+		}
 		current, err := os.ReadFile(filePath)
 		if err == nil {
 			curVer := chapterVersion(current)
-			if !req.Force && req.BaseVersion != "" && curVer != req.BaseVersion {
+			if !req.Force && curVer != req.BaseVersion {
 				jsonErrWithDiag(w, http.StatusConflict, "La nota è stata modificata da un'altra scheda o da un editor esterno.", "note", "NOTE_CONFLICT", "apiSaveNote")
 				return
 			}
@@ -4699,7 +5597,7 @@ func apiDeleteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileName := filepath.Base(strings.TrimSpace(req.File))
-	if fileName == "" || !strings.HasSuffix(fileName, ".md") {
+	if fileName == "" || !strings.EqualFold(filepath.Ext(fileName), ".md") {
 		jsonErr(w, 400, "Nome file nota non valido")
 		return
 	}
@@ -4708,7 +5606,11 @@ func apiDeleteNote(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err.Error())
 		return
 	}
-	filePath := filepath.Join(nd, fileName)
+	filePath, ferr := containedFile(nd, fileName, false)
+	if ferr != nil {
+		jsonErr(w, 400, "Nome file nota non valido")
+		return
+	}
 	_ = os.Remove(filePath)
 	writeJSON(w, map[string]any{"ok": true})
 }
@@ -4723,7 +5625,7 @@ func apiNoteToChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileName := filepath.Base(strings.TrimSpace(req.File))
-	if fileName == "" || !strings.HasSuffix(fileName, ".md") {
+	if fileName == "" || !strings.EqualFold(filepath.Ext(fileName), ".md") {
 		jsonErr(w, 400, "Nome file nota non valido")
 		return
 	}
@@ -4733,7 +5635,11 @@ func apiNoteToChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nd := filepath.Join(vDir, "notes")
-	notePath := filepath.Join(nd, fileName)
+	notePath, ferr := containedFile(nd, fileName, false)
+	if ferr != nil {
+		jsonErr(w, 400, "Nome file nota non valido")
+		return
+	}
 	data, err := os.ReadFile(notePath)
 	if err != nil {
 		jsonErr(w, 404, "Nota non trovata: "+fileName)
@@ -4847,7 +5753,10 @@ func apiReveal(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "Percorso mancante")
 		return
 	}
-	revealPath(req.Path)
+	if err := revealPath(req.Path); err != nil {
+		jsonErr(w, 500, "Impossibile mostrare il file: "+err.Error())
+		return
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -5029,23 +5938,16 @@ func fileExists(p string) bool {
 
 func newUUID() (string, error) {
 	var b [16]byte
-	randRead(&b)
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		return "", err
+	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
-	h := fmt.Sprintf("id%X-%X-%X-%X-%X", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-	return strings.ToLower(h), nil
-}
-
-func randRead(b *[16]byte) {
-	f, err := os.Open("/dev/urandom")
-	if err != nil {
-		for i := range b {
-			b[i] = byte(time.Now().UnixNano() >> (i % 8))
-		}
-		return
-	}
-	defer f.Close()
-	f.Read(b[:])
+	// UUID canonico 8-4-4-4-12, versione 4 e variant RFC 4122. Niente prefisso
+	// "id": il valore deve essere valido dopo "urn:uuid:" nell'OPF. Gli ID
+	// già presenti nei progetti esistenti non vengono riscritti.
+	h := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	return h, nil
 }
 
 func findTool() string {
@@ -5308,6 +6210,7 @@ func main() {
 	mux.HandleFunc("/api/workspace/books", apiWorkspaceBooks)
 	mux.HandleFunc("/api/recents/cover", apiRecentCover)
 	mux.HandleFunc("/api/settitle", apiSetTitle)
+	mux.HandleFunc("/api/setchaptertitle", apiSetChapterTitle)
 	mux.HandleFunc("/api/notes", apiListNotes)
 	mux.HandleFunc("/api/note", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -5498,7 +6401,7 @@ func securityMiddleware(next http.Handler) http.Handler {
 			"/api/import", "/api/addcover", "/api/delcover", "/api/useasepubcover",
 			"/api/setstyle", "/api/setfont", "/api/setscenebreak", "/api/setopening",
 			"/api/importdocx", "/api/import-manuscript", "/api/newchapter", "/api/reorder", "/api/deletechapter",
-			"/api/settitle", "/api/note", "/api/delnote", "/api/note-to-chapter",
+			"/api/settitle", "/api/setchaptertitle", "/api/note", "/api/delnote", "/api/note-to-chapter",
 			"/api/build", "/api/obsidian", "/api/openpath", "/api/opencover", "/api/reveal",
 		}
 		isMutating := false

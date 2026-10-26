@@ -80,10 +80,10 @@ chapters:
 
     // A bounded page width must not be achieved by clipping actions or dropdowns.
     await page.setViewport({ width: 1024, height: 768 });
-    await page.$eval('#btnStyle', el => el.click());
-    await page.waitForSelector('#styleList:not(.hidden) button', { visible: true });
+    await page.$eval('#btnTypography', el => el.click());
+    await page.waitForSelector('#typographyList:not(.hidden) button', { visible: true });
     const responsive = await page.evaluate(() => {
-      const menu = document.querySelector('#styleList');
+      const menu = document.querySelector('#typographyList');
       const item = menu.querySelector('button');
       const reachable = el => {
         const r = el.getBoundingClientRect();
@@ -93,8 +93,11 @@ chapters:
       return { width: document.documentElement.scrollWidth, menu: !!item && reachable(item) };
     });
     assert.equal(responsive.width, 1024, 'Topbar must fit the viewport');
-    assert(responsive.menu, 'Style menu must be visible and clickable, not overflow-clipped');
-    await page.$eval('#btnStyle', el => el.click());
+    assert(responsive.menu, 'Typography menu must be visible and clickable, not overflow-clipped');
+    await page.$eval('#btnTypography', el => el.click());
+
+    await page.$eval('#btnExportMenu', el => el.click());
+    await page.waitForSelector('#exportList:not(.hidden)', { visible: true });
     assert(await page.$eval('#btnWatch', el => {
       const r = el.getBoundingClientRect();
       const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
@@ -197,13 +200,13 @@ chapters:
     assert(epubData.preview_id, 'preview_id presente');
     assert(epubData.artifact_url, 'artifact_url presente');
 
-    // Attendi caricamento capitolo in iframe
+    // Attendi caricamento capitolo in iframe e aggiornamento stato
     await page.waitForFunction(() => {
       const fr = document.querySelector('#pubEbookFrame');
-      return fr && fr.src && fr.src.includes('/epub/');
+      const st = document.querySelector('#pubStatusText');
+      const stText = st ? st.textContent.trim() : '';
+      return fr && fr.src && fr.src.includes('/epub/') && (stText.includes('Aggiornata') || stText.includes('Updated'));
     }, { polling: 100 });
-    const ebookStatusAfter = await page.$eval('#pubStatusText', el => el.textContent.trim());
-    assert(ebookStatusAfter.includes('Aggiornata') || ebookStatusAfter.includes('Updated'), 'Stato ebook deve essere Aggiornata');
 
     // [Test 9] Tre profili, orientamento e font: reflow locale senza build
     console.log('[Test 9] Reflow e profili Ebook (Tablet, Smartphone, Orizzontale, Font)...');

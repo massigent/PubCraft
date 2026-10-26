@@ -56,7 +56,6 @@ chapters:
     });
     context = await browser.createBrowserContext();
     page = await context.newPage();
-    page.on('console', msg => console.log('PAGE LOG:', msg.text()));
     page.on('pageerror', err => console.log('PAGE ERROR:', err));
     await page.setViewport({ width: 1280, height: 800 });
 
@@ -300,6 +299,95 @@ chapters:
 
     try { fs.unlinkSync(path.join(notesDir, 'one.md')); } catch {}
     try { fs.unlinkSync(path.join(notesDir, 'two.md')); } catch {}
+
+    console.log('[Test 6d] Verifica autosalvataggio seriale note durante richiesta lenta...');
+    await page.evaluate(() => openNotebookDrawer());
+    await wait(200);
+    await page.$eval('#btnDrawerNewNote', el => el.click());
+    await wait(300);
+    await page.focus('#noteTitleInput');
+    await page.evaluate(() => { const el = document.getElementById('noteTitleInput'); el.value = ''; });
+    await page.type('#noteTitleInput', 'Nota Concorrente');
+
+    // Simula una risposta POST lenta di 600ms per /api/note
+    await page.evaluate(() => {
+      window._origApi = window.api;
+      window.api = async (url, opts) => {
+        if (url === '/api/note' && opts && opts.method === 'POST') {
+          await new Promise(r => setTimeout(r, 600));
+        }
+        return window._origApi(url, opts);
+      };
+    });
+
+    // Prima digitazione: attiva queueSaveCurrentNote
+    await page.focus('#noteContentInput');
+    await page.evaluate(() => { const el = document.getElementById('noteContentInput'); el.value = ''; });
+    await page.type('#noteContentInput', 'PRIMA_MODIFICA');
+    // Aspetta 650ms: il debounce scade e la richiesta POST lenta parte (in volo per 600ms)
+    await wait(650);
+
+    // Mentre la prima richiesta è in volo, digita la seconda modifica
+    await page.type('#noteContentInput', ' + SECONDA_MODIFICA_DURANTE_SALVATAGGIO');
+    // Attendi il completamento seriale dell'autosalvataggio (debounce + coda lenta)
+    for (let i = 0; i < 40; i++) {
+      const busy = await page.evaluate(() => Boolean(noteDirty || isSavingNote || noteSaveTimer));
+      if (!busy) break;
+      await wait(100);
+    }
+
+    // Ripristina api
+    await page.evaluate(() => {
+      window.api = window._origApi;
+      delete window._origApi;
+    });
+
+    const noteState = await page.evaluate(() => ({
+      dirty: typeof noteDirty !== 'undefined' ? noteDirty : null,
+      rev: typeof noteRevision !== 'undefined' ? noteRevision : null,
+      lastSavedRev: typeof lastSavedNoteRevision !== 'undefined' ? lastSavedNoteRevision : null,
+      content: document.getElementById('noteContentInput')?.value || '',
+      file: typeof currentNoteFile !== 'undefined' ? currentNoteFile : '',
+    }));
+    assert.strictEqual(noteState.dirty, false, 'noteDirty deve essere false al termine della coda');
+    assert(noteState.rev <= noteState.lastSavedRev, 'noteRevision deve essere allineata a lastSavedNoteRevision');
+    assert(noteState.content.includes('SECONDA_MODIFICA'), 'L editor deve contenere la seconda modifica');
+
+    const noteDiskContent = fs.readFileSync(path.join(notesDir, noteState.file), 'utf8');
+    assert(noteDiskContent.includes('SECONDA_MODIFICA'), 'Il file su disco DEVE contenere la seconda modifica');
+    console.log('  ✔ Autosalvataggio note durante richiesta lenta completato con successo!');
+
+    console.log('[Test 6e] Verifica gestione conflitto note HTTP 409 e Salva come copia...');
+    // Modifica esterna su disco del file della nota attiva
+    const diskBeforeConflict = fs.readFileSync(path.join(notesDir, noteState.file), 'utf8');
+    fs.writeFileSync(path.join(notesDir, noteState.file), diskBeforeConflict + '\nMODIFICA_ESTERNA_ALTRO_EDITOR\n');
+
+    // Digita nell'editor per causare conflitto al salvataggio
+    await page.type('#noteContentInput', ' + MODIFICA_LOCALE');
+    await page.evaluate(() => saveCurrentNote());
+    await wait(400);
+
+    // Verifica che appaia la modale di conflitto
+    const isConflictModal = await page.$eval('#modal', el => !el.classList.contains('hidden'));
+    assert.strictEqual(isConflictModal, true, 'La modale di conflitto deve apparire');
+    const modalText = await page.$eval('#modalOut', el => el.textContent);
+    assert(modalText.includes('modificata'), 'Il testo deve menzionare la modifica esterna');
+
+    // Clicca "Salva come copia" via DOM click
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('#modalActions button'));
+      const b = btns.find(x => x.textContent.includes('copia') || x.textContent.includes('copy'));
+      if (b) b.click();
+    });
+    await wait(600);
+
+    // Verifica che esista la nuova nota copia su disco
+    const allNoteFiles = fs.readdirSync(notesDir).filter(f => f.endsWith('.md'));
+    const copyFile = allNoteFiles.find(f => f.includes('copia') || f.includes('-2'));
+    assert(copyFile, 'Deve essere stata creata una copia della nota');
+    const copyDisk = fs.readFileSync(path.join(notesDir, copyFile), 'utf8');
+    assert(copyDisk.includes('MODIFICA_LOCALE'), 'La copia deve contenere le modifiche locali');
+    console.log('  ✔ Conflitto 409 intercettato e recupero con "Salva come copia" verificato!');
 
     console.log('[Test 6] Verifica salvataggio nota alla chiusura del libro (A01)...');
     await page.evaluate(() => openNotebookDrawer());
