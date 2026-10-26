@@ -1,6 +1,7 @@
 VERSION=$(shell tr -d '\r\n' < VERSION)
 PKG_VERSION=1.0.0.2
 GOFLAGS=-trimpath
+export COPYFILE_DISABLE=1
 CC=clang
 CFLAGS=-std=c11 -Wall -Wextra -O2
 PREFIX=/usr/local
@@ -63,8 +64,8 @@ app: $(BIN) $(GUI) $(HTML2PDF) $(FONTFILES) $(THIRDPARTY)
 	cp -R third-party-licenses $(APP)/Contents/Resources/
 	cp src/AppIcon.icns $(APP)/Contents/Resources/droplet.icns
 	cp src/AppIcon.icns $(APP)/Contents/Resources/applet.icns 2>/dev/null || true
-	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(APP)/Contents/Info.plist
-	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(PKG_VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $(VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $(PKG_VERSION)" $(APP)/Contents/Info.plist
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraft
 	codesign --force --sign - $(APP)/Contents/MacOS/pubcraftgui
 	@if [ -f $(APP)/Contents/MacOS/pubcraft-html2pdf ]; then codesign --force --sign - $(APP)/Contents/MacOS/pubcraft-html2pdf; fi

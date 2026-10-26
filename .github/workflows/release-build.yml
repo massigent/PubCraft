@@ -23,7 +23,7 @@ jobs:
       - name: Compile and test actual release binaries
         run: |
           make all CC=musl-gcc CFLAGS='-std=c11 -Wall -Wextra -O2 -static'
-          ./tests/test_cli.sh build/pubcraft
+          bash tests/test_cli.sh build/pubcraft
           go -C src/pubcraftgui test -race -count=1 ./...
           go -C src/pubcraftgui vet ./...
           cp build/pubcraft build/pubcraft-linux-amd64

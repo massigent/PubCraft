@@ -266,17 +266,35 @@ static int is_safe_chapter_file(const char *v) {
     return 0;
 }
 
+static char *resolve_existing_path(const char *path, char *out, size_t cap) {
+#ifdef _WIN32
+    HANDLE h = CreateFileA(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+    DWORD n = GetFinalPathNameByHandleA(h, out, (DWORD)cap, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    return n && n < cap ? out : NULL;
+#else
+    (void)cap;
+    return realpath(path, out);
+#endif
+}
+
 /* Verifica che vdir/file resti dentro vdir anche risolvendo i symlink
  * (symlink piantati nel vault verso /etc/passwd). Ritorna 0 se sicuro. */
 static int vault_contains(const char *vdir, const char *file) {
     char mp[PATH_MAX], rv[PATH_MAX], rd[PATH_MAX];
     snprintf(mp, sizeof mp, "%s/%s", vdir, file);
-    if (!realpath(vdir, rd)) return -1;
+    if (!resolve_existing_path(vdir, rd, sizeof rd)) return -1;
     /* file esistente: risolvi tutto; assente: risolvi la genitrice */
-    char *rp = realpath(mp, rv);
+    char *rp = resolve_existing_path(mp, rv, sizeof rv);
     if (rp) {
         size_t Ld = strlen(rd);
+#ifdef _WIN32
+        if (_strnicmp(rv, rd, Ld) != 0 || (rv[Ld] != '\\' && rv[Ld] != '/' && rv[Ld] != 0)) return -1;
+#else
         if (strncmp(rv, rd, Ld) != 0 || (rv[Ld] != '/' && rv[Ld] != 0)) return -1;
+#endif
         return 0;
     }
     /* assente: il contenitore lessicale basta (nome gia' validato) */
@@ -977,11 +995,27 @@ static void build_segments(Chapter *c, const char *body,
 
 /* ---------- unzip / immagini ---------- */
 static int unzip_to(const char *src_archive, const char *dest) {
+#ifdef _WIN32
+    /* Windows ships PowerShell/.NET, not Unix unzip. Pass paths as environment
+     * values so manuscript names cannot inject PowerShell syntax. */
+    const char *old_src = getenv("PUBCRAFT_UNZIP_SOURCE");
+    const char *old_dst = getenv("PUBCRAFT_UNZIP_DEST");
+    char *saved_src = old_src ? strdup(old_src) : NULL;
+    char *saved_dst = old_dst ? strdup(old_dst) : NULL;
+    SetEnvironmentVariableA("PUBCRAFT_UNZIP_SOURCE", src_archive);
+    SetEnvironmentVariableA("PUBCRAFT_UNZIP_DEST", dest);
+    int rc = system("powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:PUBCRAFT_UNZIP_SOURCE,$env:PUBCRAFT_UNZIP_DEST)\"");
+    SetEnvironmentVariableA("PUBCRAFT_UNZIP_SOURCE", saved_src);
+    SetEnvironmentVariableA("PUBCRAFT_UNZIP_DEST", saved_dst);
+    free(saved_src); free(saved_dst);
+    return rc;
+#else
     char *q1 = sh_quote(src_archive), *q2 = sh_quote(dest);
     char cmd[PATH_MAX * 2 + 64];
     snprintf(cmd, sizeof cmd, "unzip -q -o %s -d %s >/dev/null 2>&1", q1, q2);
     free(q1); free(q2);
     return system(cmd);
+#endif
 }
 static char *pc_mkdtemp(char *tmpl) {
 #ifdef _WIN32
@@ -2201,6 +2235,105 @@ static const char *sanitize_lang(const char *l) {
 }
 
 /* kindle=1: prima immagine marcata come copertina + checklist KDP */
+#ifdef _WIN32
+/* A dependency-free stored ZIP writer. EPUB requires mimetype first and
+ * uncompressed; storing the remaining entries is also standards-compliant.
+ * Avoids requiring a Unix shell/zip executable on Windows. ZIP64 is rejected. */
+typedef struct { char *name; uint32_t crc, size, offset; } PCZipEntry;
+typedef struct { FILE *out; PCZipEntry *entries; size_t count; } PCZip;
+static void zip_u16(FILE *f, uint16_t v) { fputc(v & 255, f); fputc(v >> 8, f); }
+static void zip_u32(FILE *f, uint32_t v) { zip_u16(f, v & 65535); zip_u16(f, v >> 16); }
+static int zip_add_file(PCZip *z, const char *root, const char *name) {
+    if (z->count >= 65535 || strlen(name) > 65535) return -1;
+    char full[PATH_MAX];
+    if (snprintf(full, sizeof full, "%s/%s", root, name) >= (int)sizeof full) return -1;
+    FILE *in = fopen(full, "rb");
+    if (!in) return -1;
+    unsigned char buf[32768];
+    uint32_t crc = 0xFFFFFFFFU;
+    uint64_t size = 0;
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) {
+        size += n;
+        if (size > UINT32_MAX) { fclose(in); return -1; }
+        for (size_t i = 0; i < n; i++) {
+            crc ^= buf[i];
+            for (int b = 0; b < 8; b++) crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
+        }
+    }
+    if (ferror(in) || fseek(in, 0, SEEK_SET) != 0) { fclose(in); return -1; }
+    long pos = ftell(z->out);
+    if (pos < 0) { fclose(in); return -1; }
+    PCZipEntry *entries = realloc(z->entries, (z->count + 1) * sizeof *entries);
+    if (!entries) { fclose(in); return -1; }
+    z->entries = entries;
+    PCZipEntry *e = &z->entries[z->count++];
+    e->name = strdup(name); e->crc = ~crc; e->size = (uint32_t)size; e->offset = (uint32_t)pos;
+    if (!e->name) { fclose(in); return -1; }
+    zip_u32(z->out, 0x04034B50); zip_u16(z->out, 20); zip_u16(z->out, 0x800);
+    zip_u16(z->out, 0); zip_u16(z->out, 0); zip_u16(z->out, 33);
+    zip_u32(z->out, e->crc); zip_u32(z->out, e->size); zip_u32(z->out, e->size);
+    zip_u16(z->out, (uint16_t)strlen(name)); zip_u16(z->out, 0);
+    fwrite(name, 1, strlen(name), z->out);
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, z->out);
+    int rc = ferror(in) || ferror(z->out);
+    fclose(in);
+    return rc ? -1 : 0;
+}
+static int zip_walk(PCZip *z, const char *root, const char *rel) {
+    char full[PATH_MAX];
+    if (snprintf(full, sizeof full, "%s/%s", root, rel) >= (int)sizeof full) return -1;
+    DIR *d = opendir(full);
+    if (!d) return -1;
+    int rc = 0;
+    struct dirent *de;
+    while (!rc && (de = readdir(d))) {
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+        if (!*rel && !strcmp(de->d_name, "mimetype")) continue;
+        char name[PATH_MAX], path[PATH_MAX];
+        if (snprintf(name, sizeof name, "%s%s%s", rel, *rel ? "/" : "", de->d_name) >= (int)sizeof name ||
+            snprintf(path, sizeof path, "%s/%s", root, name) >= (int)sizeof path) { rc = -1; break; }
+        struct stat st;
+        if (stat(path, &st) != 0) { rc = -1; break; }
+        if (S_ISDIR(st.st_mode)) rc = zip_walk(z, root, name);
+        else if (S_ISREG(st.st_mode)) rc = zip_add_file(z, root, name);
+    }
+    closedir(d);
+    return rc;
+}
+static int write_stored_epub(const char *root, const char *dest) {
+    PCZip z = {0};
+    z.out = fopen(dest, "wb");
+    if (!z.out) return 1;
+    int rc = zip_add_file(&z, root, "mimetype");
+    if (!rc) rc = zip_walk(&z, root, "");
+    long start = ftell(z.out);
+    if (start < 0) rc = -1;
+    for (size_t i = 0; !rc && i < z.count; i++) {
+        PCZipEntry *e = &z.entries[i];
+        zip_u32(z.out, 0x02014B50); zip_u16(z.out, 20); zip_u16(z.out, 20);
+        zip_u16(z.out, 0x800); zip_u16(z.out, 0); zip_u16(z.out, 0); zip_u16(z.out, 33);
+        zip_u32(z.out, e->crc); zip_u32(z.out, e->size); zip_u32(z.out, e->size);
+        zip_u16(z.out, (uint16_t)strlen(e->name)); zip_u16(z.out, 0); zip_u16(z.out, 0);
+        zip_u16(z.out, 0); zip_u16(z.out, 0); zip_u32(z.out, 0); zip_u32(z.out, e->offset);
+        fwrite(e->name, 1, strlen(e->name), z.out);
+    }
+    long end = ftell(z.out);
+    if (end < 0 || end < start) rc = -1;
+    if (!rc) {
+        zip_u32(z.out, 0x06054B50); zip_u16(z.out, 0); zip_u16(z.out, 0);
+        zip_u16(z.out, (uint16_t)z.count); zip_u16(z.out, (uint16_t)z.count);
+        zip_u32(z.out, (uint32_t)(end - start)); zip_u32(z.out, (uint32_t)start); zip_u16(z.out, 0);
+    }
+    if (ferror(z.out)) rc = -1;
+    if (fclose(z.out) != 0) rc = -1;
+    for (size_t i = 0; i < z.count; i++) free(z.entries[i].name);
+    free(z.entries);
+    if (rc) remove(dest);
+    return rc ? 1 : 0;
+}
+#endif
+
 static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int kindle) {
     char abs_outepub[PATH_MAX];
     if (outepub[0] == '/' || (outepub[0] && outepub[1] == ':')) {
@@ -2479,6 +2612,9 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
     fclose(opf);
     free(used);
 
+#ifdef _WIN32
+    int rc = write_stored_epub(buildt, abs_outepub);
+#else
     char *qb = sh_quote(buildt), *qo = sh_quote(abs_outepub);
     char cmd[PATH_MAX * 3];
     snprintf(cmd, sizeof cmd,
@@ -2486,6 +2622,7 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
              "zip -rDX9 -q %s . -x mimetype >/dev/null", qb, qo, qo, qo);
     free(qb); free(qo);
     int rc = run_cmd_status(cmd);
+#endif
     struct stat st;
     if (rc == 0 && stat(abs_outepub, &st) == 0 && st.st_size > 0) {
         printf("EPUB scritto in %s (%zu capitoli)\n", abs_outepub, bk->nch);

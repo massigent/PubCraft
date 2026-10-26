@@ -34,6 +34,8 @@ def main():
         with zipfile.ZipFile(epub) as z:
             assert z.infolist()[0].filename == "mimetype"
             assert z.infolist()[0].compress_type == zipfile.ZIP_STORED
+            assert z.read("mimetype") == b"application/epub+zip"
+            assert z.testzip() is None
             for name in z.namelist():
                 if name.endswith((".xml", ".opf", ".xhtml")):
                     ET.fromstring(z.read(name))
