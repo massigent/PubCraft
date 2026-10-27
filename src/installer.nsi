@@ -1,6 +1,6 @@
 ; PubCraft Windows Installer Script (NSIS)
 !include "MUI2.nsh"
-!define PUBCRAFT_VERSION "1.0.0-alpha.3"
+!define PUBCRAFT_VERSION "1.0.0-alpha.4"
 
 Name "PubCraft"
 OutFile "..\build\PubCraft-Setup-${PUBCRAFT_VERSION}.exe"

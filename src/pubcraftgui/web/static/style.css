@@ -502,15 +502,23 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 #chapterList li:hover .ch-sum { opacity: 0.95; }
 #chapterList .ch-actions {
-  display: flex; align-items: center; gap: 1px; visibility: hidden; margin-top: 2px;
+  display: flex; align-items: center; gap: 2px; margin-top: 2px; flex-shrink: 0;
+  opacity: 0.45; transition: opacity .15s ease;
 }
-#chapterList li:hover .ch-actions { visibility: visible; }
+#chapterList li:hover .ch-actions,
+#chapterList li.active .ch-actions,
+#chapterList li:focus-within .ch-actions {
+  opacity: 1;
+}
 #chapterList .move-btn, #chapterList .x {
   border: none; background: none; color: var(--muted);
-  padding: 0 3px; font-size: 11px; border-radius: 3px; cursor: pointer;
-  line-height: 1;
+  padding: 1px 3px; font-size: 11px; border-radius: 3px; cursor: pointer;
+  line-height: 1; display: inline-flex; align-items: center; justify-content: center;
 }
-#chapterList .move-btn:hover { color: var(--ink); background: var(--rule); }
+#chapterList .move-btn:hover:not(:disabled) { color: var(--ink); background: var(--rule); }
+#chapterList .move-btn:disabled {
+  opacity: 0.2; cursor: default; pointer-events: none;
+}
 #chapterList .x:hover { color: #a03028; background: #fde8e8; }
 
 #notebookSection { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
@@ -2246,9 +2254,12 @@ body.dark-mode #coverList li.active {
   background: #1e1e1e;
   border-left-color: var(--accent);
 }
-body.dark-mode #chapterList .move-btn:hover {
+body.dark-mode #chapterList .move-btn:hover:not(:disabled) {
   background: #333;
   color: #fff;
+}
+body.dark-mode #chapterList .move-btn:disabled {
+  opacity: 0.15;
 }
 body.dark-mode #chapterList .x:hover,
 body.dark-mode .note-list .note-del-btn:hover {
@@ -2989,6 +3000,62 @@ body.dark-mode .cb-card-footer {
   background: var(--accent);
   color: #ffffff;
   border-color: var(--accent);
+}
+
+.cb-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cb-card-move-btn {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 10px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: all .15s ease;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cb-card-move-btn:hover:not(:disabled) {
+  background: var(--panel2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cb-card-move-btn:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.cb-card.drag-over-left {
+  border-left: 3px solid var(--accent) !important;
+}
+
+.cb-card.drag-over-right {
+  border-right: 3px solid var(--accent) !important;
+}
+
+body.dark-mode .cb-card-move-btn {
+  border-color: #383838;
+  color: #ccc;
+}
+
+body.dark-mode .cb-card-move-btn:hover:not(:disabled) {
+  background: #2c2c2c;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+body.dark-mode .cb-card-move-btn:disabled {
+  opacity: 0.2;
 }
 
 /* Indicatore di stato nei capitoli della barra laterale (Binder style) */

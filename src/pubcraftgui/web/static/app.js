@@ -118,6 +118,8 @@ const projectMutationPaths = new Set([
   "/api/settitle", "/api/setchaptertitle", "/api/note-to-chapter",
 ]);
 let activeProjectMutations = 0;
+let isDraggingReorder = false;
+let lastDragEndTime = 0;
 
 function updateProjectLock() {
   const busy = isProjectSwitching || isBuilding;
@@ -258,6 +260,10 @@ const I18N = {
     "btn_open_title": "Open an existing book folder or import a file",
     "btn_new_chapter": "＋ New Chapter",
     "btn_new_chapter_title": "New chapter in open book",
+    "move_chapter_up": "Move chapter up",
+    "move_chapter_down": "Move chapter down",
+    "move_chapter_prev": "Move chapter earlier",
+    "move_chapter_next": "Move chapter later",
     "btn_style": "Style: ",
     "btn_style_title": "Book style: applies to print, PDF, and preview",
     "btn_opening": "Opening: ",
@@ -512,7 +518,7 @@ const I18N = {
     "table_insert": "Insert",
     "table_col_prefix": "Column",
     "table_cell_prefix": "Cell",
-    "welcome_version": "Version 1.0.0-alpha.3",
+    "welcome_version": "Version 1.0.0-alpha.4",
     "welcome_tutorial_link": "Show PubCraft Tutorial",
     "welcome_shortcuts_link": "Open Help & Shortcuts",
     "welcome_btn_new": "✨ New Book…",
@@ -655,6 +661,10 @@ const I18N = {
     "btn_open_title": "Apri una cartella libro esistente o importa un file",
     "btn_new_chapter": "＋ Nuovo capitolo",
     "btn_new_chapter_title": "Nuovo capitolo nel libro aperto",
+    "move_chapter_up": "Sposta capitolo in alto",
+    "move_chapter_down": "Sposta capitolo in basso",
+    "move_chapter_prev": "Sposta capitolo prima (indietro)",
+    "move_chapter_next": "Sposta capitolo dopo (avanti)",
     "btn_style": "Stile: ",
     "btn_style_title": "Stile del libro: vale per stampa, PDF e anteprima",
     "btn_opening": "Inizio: ",
@@ -909,7 +919,7 @@ const I18N = {
     "table_insert": "Inserisci",
     "table_col_prefix": "Colonna",
     "table_cell_prefix": "Cella",
-    "welcome_version": "Versione 1.0.0-alpha.3",
+    "welcome_version": "Versione 1.0.0-alpha.4",
     "welcome_tutorial_link": "Mostra introduzione a PubCraft",
     "welcome_shortcuts_link": "Guida e scorciatoie da tastiera",
     "welcome_btn_new": "✨ Nuovo Libro…",
@@ -1043,6 +1053,10 @@ const I18N = {
     "btn_open_title": "Abrir una carpeta de libro existente o importar un archivo",
     "btn_new_chapter": "＋ Nuevo capítulo",
     "btn_new_chapter_title": "Nuevo capítulo en el libro abierto",
+    "move_chapter_up": "Mover capítulo hacia arriba",
+    "move_chapter_down": "Mover capítulo hacia abajo",
+    "move_chapter_prev": "Mover capítulo hacia atrás",
+    "move_chapter_next": "Mover capítulo hacia adelante",
     "btn_style": "Estilo: ",
     "btn_style_title": "Estilo del libro: válido para impresión, PDF y vista previa",
     "btn_opening": "Inicio: ",
@@ -1272,7 +1286,7 @@ const I18N = {
     "table_insert": "Insertar",
     "table_col_prefix": "Columna",
     "table_cell_prefix": "Celda",
-    "welcome_version": "Versión 1.0.0-alpha.3",
+    "welcome_version": "Versión 1.0.0-alpha.4",
     "welcome_tutorial_link": "Mostrar tutorial de PubCraft",
     "welcome_shortcuts_link": "Ayuda y atajos de teclado",
     "welcome_btn_new": "✨ Nuevo Libro…",
@@ -1440,6 +1454,10 @@ const I18N = {
     "btn_open_title": "Ouvrir un dossier de livre existant ou importer un fichier",
     "btn_new_chapter": "＋ Nouveau chapitre",
     "btn_new_chapter_title": "Nouveau chapitre dans le livre ouvert",
+    "move_chapter_up": "Monter le chapitre",
+    "move_chapter_down": "Descendre le chapitre",
+    "move_chapter_prev": "Déplacer le chapitre avant",
+    "move_chapter_next": "Déplacer le chapitre après",
     "btn_style": "Style : ",
     "btn_style_title": "Style du livre : s'applique à l'impression, au PDF et à l'aperçu",
     "btn_opening": "Début : ",
@@ -1669,7 +1687,7 @@ const I18N = {
     "table_insert": "Insérer",
     "table_col_prefix": "Colonne",
     "table_cell_prefix": "Cellule",
-    "welcome_version": "Version 1.0.0-alpha.3",
+    "welcome_version": "Version 1.0.0-alpha.4",
     "welcome_tutorial_link": "Afficher le didacticiel PubCraft",
     "welcome_shortcuts_link": "Aide et raccourcis clavier",
     "welcome_btn_new": "✨ Nouveau Livre…",
@@ -1837,6 +1855,10 @@ const I18N = {
     "btn_open_title": "Vorhandenen Buchordner öffnen oder Datei importieren",
     "btn_new_chapter": "＋ Neues Kapitel",
     "btn_new_chapter_title": "Neues Kapitel im geöffneten Buch",
+    "move_chapter_up": "Kapitel nach oben verschieben",
+    "move_chapter_down": "Kapitel nach unten verschieben",
+    "move_chapter_prev": "Kapitel nach links verschieben",
+    "move_chapter_next": "Kapitel nach rechts verschieben",
     "btn_style": "Stil: ",
     "btn_style_title": "Buchstil: gilt für Druck, PDF und Vorschau",
     "btn_opening": "Anfang: ",
@@ -2066,7 +2088,7 @@ const I18N = {
     "table_insert": "Einfügen",
     "table_col_prefix": "Spalte",
     "table_cell_prefix": "Zelle",
-    "welcome_version": "Version 1.0.0-alpha.3",
+    "welcome_version": "Version 1.0.0-alpha.4",
     "welcome_tutorial_link": "PubCraft-Tutorial anzeigen",
     "welcome_shortcuts_link": "Hilfe & Tastaturkürzel",
     "welcome_btn_new": "✨ Neues Buch…",
@@ -2234,6 +2256,10 @@ const I18N = {
     "btn_open_title": "Abrir uma pasta de livro existente ou importar um arquivo",
     "btn_new_chapter": "＋ Novo capítulo",
     "btn_new_chapter_title": "Novo capítulo no livro aberto",
+    "move_chapter_up": "Mover capítulo para cima",
+    "move_chapter_down": "Mover capítulo para baixo",
+    "move_chapter_prev": "Mover capítulo para trás",
+    "move_chapter_next": "Mover capítulo para frente",
     "btn_style": "Estilo: ",
     "btn_style_title": "Estilo do livro: aplica-se à impressão, PDF e pré-visualização",
     "btn_opening": "Início: ",
@@ -2463,7 +2489,7 @@ const I18N = {
     "table_insert": "Inserir",
     "table_col_prefix": "Coluna",
     "table_cell_prefix": "Célula",
-    "welcome_version": "Versão 1.0.0-alpha.3",
+    "welcome_version": "Versão 1.0.0-alpha.4",
     "welcome_tutorial_link": "Mostrar tutorial do PubCraft",
     "welcome_shortcuts_link": "Ajuda e atalhos de teclado",
     "welcome_btn_new": "✨ Novo Livro…",
@@ -2631,6 +2657,10 @@ const I18N = {
     "btn_open_title": "打开已有图书文件夹或导入文件",
     "btn_new_chapter": "＋ 新建章节",
     "btn_new_chapter_title": "在当前图书中创建新章节",
+    "move_chapter_up": "上移章节",
+    "move_chapter_down": "下移章节",
+    "move_chapter_prev": "前移章节",
+    "move_chapter_next": "后移章节",
     "btn_style": "风格：",
     "btn_style_title": "图书排版风格：适用于印刷、PDF 和预览",
     "btn_opening": "段首：",
@@ -2860,7 +2890,7 @@ const I18N = {
     "table_insert": "插入",
     "table_col_prefix": "列",
     "table_cell_prefix": "单元格",
-    "welcome_version": "版本 1.0.0-alpha.3",
+    "welcome_version": "版本 1.0.0-alpha.4",
     "welcome_tutorial_link": "显示 PubCraft 教程",
     "welcome_shortcuts_link": "帮助与键盘快捷键",
     "welcome_btn_new": "✨ 新建图书…",
@@ -3028,6 +3058,10 @@ const I18N = {
     "btn_open_title": "既存の書籍フォルダを開く、またはファイルをインポート",
     "btn_new_chapter": "＋ 新規章",
     "btn_new_chapter_title": "開いている書籍に新しい章を追加",
+    "move_chapter_up": "章を上に移動",
+    "move_chapter_down": "章を下に移動",
+    "move_chapter_prev": "章を前に移動",
+    "move_chapter_next": "章を後に移動",
     "btn_style": "スタイル：",
     "btn_style_title": "書籍スタイル：印刷、PDF、プレビューに適用",
     "btn_opening": "章頭：",
@@ -3257,7 +3291,7 @@ const I18N = {
     "table_insert": "挿入",
     "table_col_prefix": "列",
     "table_cell_prefix": "セル",
-    "welcome_version": "バージョン 1.0.0-alpha.3",
+    "welcome_version": "バージョン 1.0.0-alpha.4",
     "welcome_tutorial_link": "PubCraft チュートリアルを表示",
     "welcome_shortcuts_link": "ヘルプとキーボードショートカット",
     "welcome_btn_new": "✨ 新規書籍…",
@@ -3425,6 +3459,10 @@ const I18N = {
     "btn_open_title": "Открыть папку с книгой или импортировать файл",
     "btn_new_chapter": "＋ Новая глава",
     "btn_new_chapter_title": "Новая глава в открытой книге",
+    "move_chapter_up": "Переместить главу вверх",
+    "move_chapter_down": "Переместить главу вниз",
+    "move_chapter_prev": "Переместить главу назад",
+    "move_chapter_next": "Переместить главу вперед",
     "btn_style": "Стиль: ",
     "btn_style_title": "Стиль книги: применяется к печати, PDF и просмотру",
     "btn_opening": "Начало: ",
@@ -3654,7 +3692,7 @@ const I18N = {
     "table_insert": "Вставить",
     "table_col_prefix": "Столбец",
     "table_cell_prefix": "Ячейка",
-    "welcome_version": "Версия 1.0.0-alpha.3",
+    "welcome_version": "Версия 1.0.0-alpha.4",
     "welcome_tutorial_link": "Показать руководство PubCraft",
     "welcome_shortcuts_link": "Справка и сочетания клавиш",
     "welcome_btn_new": "✨ Новая книга…",
@@ -3822,6 +3860,10 @@ const I18N = {
     "btn_open_title": "فتح مجلد كتاب موجود أو استيراد ملف",
     "btn_new_chapter": "＋ فصل جديد",
     "btn_new_chapter_title": "فصل جديد في الكتاب المفتوح",
+    "move_chapter_up": "تحريك الفصل لأعلى",
+    "move_chapter_down": "تحريك الفصل لأسفل",
+    "move_chapter_prev": "تحريك الفصل للخلف",
+    "move_chapter_next": "تحريك الفصل للأمام",
     "btn_style": "النمط: ",
     "btn_style_title": "نمط الكتاب: يسري على الطباعة، ملفات PDF والمعاينة",
     "btn_opening": "البداية: ",
@@ -4051,7 +4093,7 @@ const I18N = {
     "table_insert": "إدراج",
     "table_col_prefix": "عمود",
     "table_cell_prefix": "خلية",
-    "welcome_version": "الإصدار 1.0.0-alpha.3",
+    "welcome_version": "الإصدار 1.0.0-alpha.4",
     "welcome_tutorial_link": "عرض دليل PubCraft التعليمي",
     "welcome_shortcuts_link": "المساعدة واختصارات لوحة المفاتيح",
     "welcome_btn_new": "✨ كتاب جديد…",
@@ -4745,14 +4787,105 @@ function renderBook() {
     }
     chInfo.appendChild(meta);
 
+    const actions = document.createElement("div");
+    actions.className = "ch-actions";
+    actions.draggable = false;
+
+    const btnUp = document.createElement("button");
+    btnUp.type = "button";
+    btnUp.className = "move-btn move-up";
+    btnUp.textContent = "▲";
+    btnUp.title = t("move_chapter_up") || "Sposta capitolo in alto";
+    btnUp.setAttribute("aria-label", t("move_chapter_up") || "Sposta capitolo in alto");
+    if (i === 0) {
+      btnUp.disabled = true;
+    }
+    btnUp.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (i > 0) {
+        await moveChapterByDelta(c.file, -1);
+      }
+    });
+
+    const btnDown = document.createElement("button");
+    btnDown.type = "button";
+    btnDown.className = "move-btn move-down";
+    btnDown.textContent = "▼";
+    btnDown.title = t("move_chapter_down") || "Sposta capitolo in basso";
+    btnDown.setAttribute("aria-label", t("move_chapter_down") || "Sposta capitolo in basso");
+    if (i === (b.chapters || []).length - 1) {
+      btnDown.disabled = true;
+    }
+    btnDown.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (i < (b.chapters || []).length - 1) {
+        await moveChapterByDelta(c.file, 1);
+      }
+    });
+
     const x = document.createElement("button");
-    x.className = "x"; x.textContent = "✕"; x.title = "Sposta in .cestina";
+    x.type = "button";
+    x.className = "x";
+    x.textContent = "✕";
+    x.title = "Sposta in .cestina";
+    x.setAttribute("aria-label", "Sposta in .cestina");
     x.addEventListener("click", (e) => { e.stopPropagation(); deleteChapter(c); });
-    li.append(num, chInfo, x);
-    li.addEventListener("click", () => openChapter(c.file));
+
+    actions.append(btnUp, btnDown, x);
+    li.append(num, chInfo, actions);
+
+    li.draggable = true;
+    li.addEventListener("dragstart", (e) => {
+      isDraggingReorder = true;
+      e.dataTransfer.setData("text/plain", c.file);
+      e.dataTransfer.effectAllowed = "move";
+      li.classList.add("dragging");
+    });
+    li.addEventListener("dragend", () => {
+      isDraggingReorder = false;
+      lastDragEndTime = Date.now();
+      li.classList.remove("dragging");
+      document.querySelectorAll("#chapterList li").forEach((el) => {
+        el.classList.remove("drag-over-top", "drag-over-bottom");
+      });
+    });
+    li.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = li.getBoundingClientRect();
+      const relY = e.clientY - rect.top;
+      if (relY < rect.height / 2) {
+        li.classList.add("drag-over-top");
+        li.classList.remove("drag-over-bottom");
+      } else {
+        li.classList.add("drag-over-bottom");
+        li.classList.remove("drag-over-top");
+      }
+    });
+    li.addEventListener("dragleave", () => {
+      li.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+    li.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const insertBefore = li.classList.contains("drag-over-top");
+      li.classList.remove("drag-over-top", "drag-over-bottom");
+      lastDragEndTime = Date.now();
+      const srcFile = e.dataTransfer.getData("text/plain");
+      if (srcFile && srcFile !== c.file) {
+        await reorderChaptersByDrop(srcFile, c.file, insertBefore);
+      }
+    });
+
+    li.addEventListener("click", () => {
+      if (isDraggingReorder || (Date.now() - lastDragEndTime < 300)) return;
+      openChapter(c.file);
+    });
     chapterList.appendChild(li);
   });
   updateBookStats();
+  if (typeof updateFocusChapterSelect === "function") {
+    updateFocusChapterSelect();
+  }
   if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
     renderCorkboard();
   }
@@ -6982,6 +7115,42 @@ function renderCorkboard() {
     const words = typeof c.words === "number" ? c.words : 0;
     wcSpan.textContent = `📝 ${words.toLocaleString(currentLang)} parole`;
 
+    const actionsGroup = document.createElement("div");
+    actionsGroup.className = "cb-card-actions";
+    actionsGroup.draggable = false;
+
+    const moveLeftBtn = document.createElement("button");
+    moveLeftBtn.type = "button";
+    moveLeftBtn.className = "cb-card-move-btn cb-card-move-prev";
+    moveLeftBtn.textContent = "◀";
+    moveLeftBtn.title = t("move_chapter_prev") || "Sposta capitolo prima (◀)";
+    moveLeftBtn.setAttribute("aria-label", t("move_chapter_prev") || "Sposta capitolo prima");
+    if (originalIndex === 0) {
+      moveLeftBtn.disabled = true;
+    }
+    moveLeftBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (originalIndex > 0) {
+        await moveChapterByDelta(c.file, -1);
+      }
+    });
+
+    const moveRightBtn = document.createElement("button");
+    moveRightBtn.type = "button";
+    moveRightBtn.className = "cb-card-move-btn cb-card-move-next";
+    moveRightBtn.textContent = "▶";
+    moveRightBtn.title = t("move_chapter_next") || "Sposta capitolo dopo (▶)";
+    moveRightBtn.setAttribute("aria-label", t("move_chapter_next") || "Sposta capitolo dopo");
+    if (originalIndex === chapters.length - 1) {
+      moveRightBtn.disabled = true;
+    }
+    moveRightBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (originalIndex < chapters.length - 1) {
+        await moveChapterByDelta(c.file, 1);
+      }
+    });
+
     const openBtn = document.createElement("button");
     openBtn.type = "button";
     openBtn.className = "cb-card-open-btn";
@@ -6993,39 +7162,57 @@ function renderCorkboard() {
       setView("edit");
     });
 
-    footer.append(wcSpan, openBtn);
+    actionsGroup.append(moveLeftBtn, moveRightBtn, openBtn);
+    footer.append(wcSpan, actionsGroup);
     card.appendChild(footer);
 
-    // Clic su tutta la scheda: apri nell'editor
+    // Clic su tutta la scheda: apri nell'editor (se non stiamo trascinando)
     card.addEventListener("click", () => {
+      if (isDraggingReorder || (Date.now() - lastDragEndTime < 300)) return;
       openChapter(c.file);
       setView("edit");
     });
 
     // Drag and drop per riordinare
     card.addEventListener("dragstart", (e) => {
+      isDraggingReorder = true;
       e.dataTransfer.setData("text/plain", c.file);
       e.dataTransfer.effectAllowed = "move";
       card.classList.add("dragging");
     });
     card.addEventListener("dragend", () => {
+      isDraggingReorder = false;
+      lastDragEndTime = Date.now();
       card.classList.remove("dragging");
-      document.querySelectorAll(".cb-card").forEach((el) => el.classList.remove("drag-over"));
+      document.querySelectorAll(".cb-card").forEach((el) => {
+        el.classList.remove("drag-over", "drag-over-left", "drag-over-right");
+      });
     });
     card.addEventListener("dragover", (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
+      const rect = card.getBoundingClientRect();
+      const relX = e.clientX - rect.left;
+      if (relX < rect.width / 2) {
+        card.classList.add("drag-over-left");
+        card.classList.remove("drag-over-right");
+      } else {
+        card.classList.add("drag-over-right");
+        card.classList.remove("drag-over-left");
+      }
       card.classList.add("drag-over");
     });
     card.addEventListener("dragleave", () => {
-      card.classList.remove("drag-over");
+      card.classList.remove("drag-over", "drag-over-left", "drag-over-right");
     });
     card.addEventListener("drop", async (e) => {
       e.preventDefault();
-      card.classList.remove("drag-over");
+      const insertBefore = card.classList.contains("drag-over-left");
+      card.classList.remove("drag-over", "drag-over-left", "drag-over-right");
+      lastDragEndTime = Date.now();
       const srcFile = e.dataTransfer.getData("text/plain");
       if (srcFile && srcFile !== c.file) {
-        await reorderChaptersByFiles(srcFile, c.file);
+        await reorderChaptersByDrop(srcFile, c.file, insertBefore);
       }
     });
 
@@ -7115,16 +7302,22 @@ async function setChapterStatus(file, newStatus) {
   if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") renderCorkboard();
 }
 
-async function reorderChaptersByFiles(srcFile, targetFile) {
+async function moveChapterByDelta(file, delta) {
   if (!state?.book?.chapters) return;
   const chapters = [...state.book.chapters];
-  const srcIdx = chapters.findIndex((x) => x.file === srcFile);
-  const targetIdx = chapters.findIndex((x) => x.file === targetFile);
-  if (srcIdx === -1 || targetIdx === -1) return;
+  const idx = chapters.findIndex((x) => x.file === file);
+  if (idx === -1) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= chapters.length) return;
 
-  const [moved] = chapters.splice(srcIdx, 1);
-  chapters.splice(targetIdx, 0, moved);
+  const [moved] = chapters.splice(idx, 1);
+  chapters.splice(newIdx, 0, moved);
   state.book.chapters = chapters;
+
+  renderBook();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+    renderCorkboard();
+  }
 
   try {
     const res = await api("/api/reorder", {
@@ -7134,13 +7327,61 @@ async function reorderChaptersByFiles(srcFile, targetFile) {
     });
     if (res && res.book) {
       state.book = res.book;
+      renderBook();
+      if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+        renderCorkboard();
+      }
     }
   } catch (err) {
     console.error("Errore riordino capitoli:", err);
+    await refreshState();
   }
-  renderBook();
-  renderCorkboard();
 }
+
+async function reorderChaptersByDrop(srcFile, targetFile, insertBefore) {
+  if (!state?.book?.chapters || !srcFile || !targetFile || srcFile === targetFile) return;
+  const chapters = [...state.book.chapters];
+  const srcIdx = chapters.findIndex((x) => x.file === srcFile);
+  if (srcIdx === -1) return;
+  const [moved] = chapters.splice(srcIdx, 1);
+  let targetIdx = chapters.findIndex((x) => x.file === targetFile);
+  if (targetIdx === -1) return;
+  if (!insertBefore) {
+    targetIdx += 1;
+  }
+  chapters.splice(targetIdx, 0, moved);
+  state.book.chapters = chapters;
+
+  renderBook();
+  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+    renderCorkboard();
+  }
+
+  try {
+    const res = await api("/api/reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files: chapters.map((x) => x.file) }),
+    });
+    if (res && res.book) {
+      state.book = res.book;
+      renderBook();
+      if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
+        renderCorkboard();
+      }
+    }
+  } catch (err) {
+    console.error("Errore riordino capitoli:", err);
+    await refreshState();
+  }
+}
+
+async function reorderChaptersByFiles(srcFile, targetFile) {
+  await reorderChaptersByDrop(srcFile, targetFile, true);
+}
+window.moveChapterByDelta = moveChapterByDelta;
+window.reorderChaptersByDrop = reorderChaptersByDrop;
+window.reorderChaptersByFiles = reorderChaptersByFiles;
 
 /* ----------------------------------------------------------------- theme */
 let isDarkMode = false;

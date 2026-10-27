@@ -2,6 +2,19 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
+## [1.0.0-alpha.4]
+
+- Re-introduced and polished chapter movement controls across all views.
+- Dedicated up/down arrow buttons in the sidebar chapter list with disabled states for boundaries.
+- New previous/next arrow buttons on Corkboard cards (Lavagna a Schede) for instant repositioning.
+- Smooth HTML5 drag-and-drop reordering on both sidebar items and Corkboard cards, with insertion edge indicators (`drag-over-top`/`drag-over-bottom` in sidebar, `drag-over-left`/`drag-over-right` in Corkboard).
+- Drag completion guard prevents accidental chapter opening and editor switching during Corkboard card repositioning.
+- Immediate UI synchronization and server persistence to `book.yaml` via `/api/reorder`.
+- Complete localization across all 10 supported languages for chapter movement controls.
+- New browser regression test suite (`tests/test_chapter_reorder.cjs`) validating movement in sidebar, corkboard and disk persistence.
+
+Details: [bilingual alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md).
+
 ## [1.0.0-alpha.3]
 
 - Universal 2 `PubCraft.app` and portable Mac executables: native Intel and Apple
@@ -74,6 +87,7 @@ Initial public alpha: local Markdown editor, CLI, Vellum/DOCX import, EPUB/print
 
 Historical notes: [1.0.0-alpha.1](RELEASE_NOTES_1.0.0-alpha.1.md).
 
+[1.0.0-alpha.4]: https://github.com/massigent/PubCraft/compare/v1.0.0-alpha.3...v1.0.0-alpha.4
 [1.0.0-alpha.3]: https://github.com/massigent/PubCraft/compare/v1.0.0-alpha.2...v1.0.0-alpha.3
 [1.0.0-alpha.2]: https://github.com/massigent/PubCraft/compare/v1.0.0-alpha.1...v1.0.0-alpha.2
 [1.0.0-alpha.1]: https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.1

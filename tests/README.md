@@ -92,7 +92,7 @@ PUBCRAFT_GUI_BIN="$PWD/build/PubCraft.app/Contents/MacOS/pubcraftgui" node tests
 ```
 
 Release-specific results and limitations are recorded in
-[`docs/RELEASE_VALIDATION_1.0.0-alpha.3.md`](../docs/RELEASE_VALIDATION_1.0.0-alpha.3.md).
+[`docs/RELEASE_VALIDATION_1.0.0-alpha.4.md`](../docs/RELEASE_VALIDATION_1.0.0-alpha.4.md).
 Mac release outputs are always Universal 2. Read [AGENTS.md](../AGENTS.md) and
 [the release playbook](../docs/RELEASING.md) before packaging or publishing.
 `make verify-macos-release` checks all four Mac formats and both CPU slices;

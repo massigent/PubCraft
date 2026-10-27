@@ -9,17 +9,17 @@ PubCraft is a free, open-source writing and publishing tool with a local browser
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Latest: 1.0.0-alpha.3 — Universal Mac app, native on Intel and Apple Silicon.**
+**Latest: 1.0.0-alpha.4 — Universal Mac app, native on Intel and Apple Silicon.**
 
 ### Download
 
 | Platform | Downloads |
 | --- | --- |
-| **macOS Universal (Intel + Apple Silicon)** | **[PubCraft.app ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3-macos-universal.app.zip)** · [DMG app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3.dmg) · [PKG installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3.pkg) · [Portable tools](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3-macos.tar.gz) |
-| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-Setup-1.0.0-alpha.3.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3-windows-x64.zip) |
-| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/PubCraft-1.0.0-alpha.3-linux-x64.tar.gz) |
+| **macOS Universal (Intel + Apple Silicon)** | **[PubCraft.app ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-macos-universal.app.zip)** · [DMG app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4.dmg) · [PKG installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4.pkg) · [Portable tools](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-macos.tar.gz) |
+| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-Setup-1.0.0-alpha.4.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-windows-x64.zip) |
+| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-linux-x64.tar.gz) |
 
-[Release notes and all files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.3) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.3/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
+[Release notes and all files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.4) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
 
 **Mac installation:** extract the app ZIP and drag `PubCraft.app` into Applications, or use the DMG as usual. **macOS 13 Ventura or newer; no Rosetta required.** The launcher, CLI, GUI and PDF helper all include both CPU architectures. Quit the old app before replacing it.
 
@@ -39,11 +39,11 @@ The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows ins
 
 ## What's new?
 
-**Alpha.3:** a genuinely Universal 2 Mac app and portable tools; direct `.app.zip`; native launcher with a controlled minimum OS; automated architecture, signature, permission, version and source-provenance checks. The same artifact set is tested on Intel and Apple Silicon. Persistent [agent instructions](AGENTS.md) and a [release playbook](docs/RELEASING.md) prevent a future Intel-only release from being mistaken for Universal.
+**Alpha.4:** restored and expanded chapter reordering across views. Seamless up/down move arrows in the chapter list sidebar; previous/next move arrows and smooth drag-and-drop on the Corkboard (Lavagna) with zero accidental edit navigation and immediate persistence to `book.yaml`.
 
-**Included from alpha.2:** Corkboard/index cards, synopses, writing status, selection/session word counts, command palette, Scrivener import and improved DOCX/ODT/Markdown fidelity. Safer project selection, versioned saves, protected metadata/covers/trash, XML/UTF-8 sanitization, nested images/lists and stable publication identifiers.
+**Included from alpha.3:** Universal 2 Mac app and portable tools (Intel + Apple Silicon native, no Rosetta required, macOS 13+ minimum).
 
-See the [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md) and [validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.3.md).
+See the [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md) and [validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.4.md).
 
 ## Why PubCraft?
 

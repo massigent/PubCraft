@@ -36,7 +36,7 @@
 #include <windows.h>
 #endif
 
-#define VERSION "1.0.0-alpha.3"
+#define VERSION "1.0.0-alpha.4"
 
 static void die(const char *msg) { perror(msg); exit(1); }
 
