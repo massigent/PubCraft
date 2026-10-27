@@ -23,7 +23,17 @@ PubCraft is a free, open-source writing and publishing tool with a local browser
 
 **Mac installation:** extract the app ZIP and drag `PubCraft.app` into Applications, or use the DMG as usual. **macOS 13 Ventura or newer; no Rosetta required.** The launcher, CLI, GUI and PDF helper all include both CPU architectures. Quit the old app before replacing it.
 
-The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows installer are not publisher-signed. OS security warnings may appear. Use the official release and verify its checksums. GitHub's “Source code” downloads are not ready-to-run apps.
+> **macOS Security Notice (Gatekeeper / "Move to Trash"):**  
+> PubCraft is a free open-source project with an ad-hoc code signature and is not enrolled in the paid Apple Developer Program ($99/year) or notarized by Apple. On first launch, macOS (especially Sonoma and Sequoia) may block the application with a false-alarm dialog: *"PubCraft is damaged and cannot be opened. You should move it to the Trash."*  
+> **The application is intact and not damaged.** To clear the quarantine flag set by macOS on downloaded files and open it normally:
+> 1. Drag `PubCraft.app` to your `/Applications` folder.
+> 2. Open **Terminal** and run:
+>    ```sh
+>    xattr -cr /Applications/PubCraft.app
+>    ```
+> 3. Launch PubCraft normally with a double-click. *(Alternatively, if shown the standard Gatekeeper prompt, you can open System Settings → Privacy & Security and click "Open Anyway").*
+
+The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows installer are not publisher-signed. Use the official release and verify its checksums. GitHub's “Source code” downloads are not ready-to-run apps.
 
 ![PubCraft editor and styled book preview](docs/media/pubcraft-editor.png)
 

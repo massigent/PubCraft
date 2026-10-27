@@ -23,7 +23,17 @@ PubCraft è gratuito e open source: editor locale nel browser, compilatore CLI i
 
 **Installazione Mac:** estrai il ZIP e trascina `PubCraft.app` in Applicazioni, oppure usa il DMG come prima. **Richiede macOS 13 Ventura o successivo; Rosetta non serve.** Launcher, compilatore, GUI e helper PDF contengono entrambi i tipi di processore. Chiudi la vecchia app prima di sostituirla.
 
-L'app ha una firma ad-hoc, non una firma Developer ID/notarizzazione Apple; PKG e installer Windows non sono firmati da un editore verificato. Il sistema può mostrare avvisi di sicurezza. Usa la Release ufficiale e verifica i checksum. Gli archivi “Source code” contengono sorgenti, non app pronte.
+> **Avviso sicurezza macOS (Gatekeeper / "Sposta nel Cestino"):**  
+> PubCraft è un progetto open source indipendente e gratuito con firma *ad-hoc*. Non disponendo di un certificato a pagamento Apple Developer ($99/anno) né di notarizzazione, al primo avvio macOS (in particolare su Sonoma e Sequoia) potrebbe bloccare l'applicazione mostrando l'avviso allarmante: *"PubCraft è danneggiato e non può essere aperto. Dovresti spostarlo nel Cestino."*  
+> **L'applicazione è integra e non è danneggiata.** Per rimuovere il blocco di quarantena applicato da macOS al download e aprirla normalmente:
+> 1. Trascina `PubCraft.app` nella cartella `/Applications` (Applicazioni).
+> 2. Apri il **Terminale** ed esegui il comando:
+>    ```sh
+>    xattr -cr /Applications/PubCraft.app
+>    ```
+> 3. Avvia PubCraft con un normale doppio clic. *(In alternativa, se visualizzi l'avviso standard, puoi andare in Impostazioni di Sistema → Privacy e sicurezza e fare clic su "Apri comunque").*
+
+L'app ha una firma ad-hoc, non una firma Developer ID/notarizzazione Apple; PKG e installer Windows non sono firmati da un editore verificato. Usa la Release ufficiale e verifica i checksum. Gli archivi “Source code” contengono sorgenti, non app pronte.
 
 ![Editor PubCraft e anteprima del libro](docs/media/pubcraft-editor.png)
 
