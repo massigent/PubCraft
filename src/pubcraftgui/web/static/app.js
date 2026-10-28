@@ -113,6 +113,7 @@ function formatMarkdownForBook(raw) {
 
 const projectMutationPaths = new Set([
   "/api/newchapter", "/api/deletechapter", "/api/reorder", "/api/setstyle",
+  "/api/forget-chapter",
   "/api/setfont", "/api/setopening", "/api/setscenebreak", "/api/addcover",
   "/api/delcover", "/api/useasepubcover", "/api/uploadimage",
   "/api/settitle", "/api/setchaptertitle", "/api/note-to-chapter",
@@ -518,7 +519,7 @@ const I18N = {
     "table_insert": "Insert",
     "table_col_prefix": "Column",
     "table_cell_prefix": "Cell",
-    "welcome_version": "Version 1.0.0-alpha.4",
+    "welcome_version": "Version 1.0.0-alpha.5",
     "welcome_tutorial_link": "Show PubCraft Tutorial",
     "welcome_shortcuts_link": "Open Help & Shortcuts",
     "welcome_btn_new": "✨ New Book…",
@@ -919,7 +920,7 @@ const I18N = {
     "table_insert": "Inserisci",
     "table_col_prefix": "Colonna",
     "table_cell_prefix": "Cella",
-    "welcome_version": "Versione 1.0.0-alpha.4",
+    "welcome_version": "Versione 1.0.0-alpha.5",
     "welcome_tutorial_link": "Mostra introduzione a PubCraft",
     "welcome_shortcuts_link": "Guida e scorciatoie da tastiera",
     "welcome_btn_new": "✨ Nuovo Libro…",
@@ -1286,7 +1287,7 @@ const I18N = {
     "table_insert": "Insertar",
     "table_col_prefix": "Columna",
     "table_cell_prefix": "Celda",
-    "welcome_version": "Versión 1.0.0-alpha.4",
+    "welcome_version": "Versión 1.0.0-alpha.5",
     "welcome_tutorial_link": "Mostrar tutorial de PubCraft",
     "welcome_shortcuts_link": "Ayuda y atajos de teclado",
     "welcome_btn_new": "✨ Nuevo Libro…",
@@ -1687,7 +1688,7 @@ const I18N = {
     "table_insert": "Insérer",
     "table_col_prefix": "Colonne",
     "table_cell_prefix": "Cellule",
-    "welcome_version": "Version 1.0.0-alpha.4",
+    "welcome_version": "Version 1.0.0-alpha.5",
     "welcome_tutorial_link": "Afficher le didacticiel PubCraft",
     "welcome_shortcuts_link": "Aide et raccourcis clavier",
     "welcome_btn_new": "✨ Nouveau Livre…",
@@ -2088,7 +2089,7 @@ const I18N = {
     "table_insert": "Einfügen",
     "table_col_prefix": "Spalte",
     "table_cell_prefix": "Zelle",
-    "welcome_version": "Version 1.0.0-alpha.4",
+    "welcome_version": "Version 1.0.0-alpha.5",
     "welcome_tutorial_link": "PubCraft-Tutorial anzeigen",
     "welcome_shortcuts_link": "Hilfe & Tastaturkürzel",
     "welcome_btn_new": "✨ Neues Buch…",
@@ -2489,7 +2490,7 @@ const I18N = {
     "table_insert": "Inserir",
     "table_col_prefix": "Coluna",
     "table_cell_prefix": "Célula",
-    "welcome_version": "Versão 1.0.0-alpha.4",
+    "welcome_version": "Versão 1.0.0-alpha.5",
     "welcome_tutorial_link": "Mostrar tutorial do PubCraft",
     "welcome_shortcuts_link": "Ajuda e atalhos de teclado",
     "welcome_btn_new": "✨ Novo Livro…",
@@ -2890,7 +2891,7 @@ const I18N = {
     "table_insert": "插入",
     "table_col_prefix": "列",
     "table_cell_prefix": "单元格",
-    "welcome_version": "版本 1.0.0-alpha.4",
+    "welcome_version": "版本 1.0.0-alpha.5",
     "welcome_tutorial_link": "显示 PubCraft 教程",
     "welcome_shortcuts_link": "帮助与键盘快捷键",
     "welcome_btn_new": "✨ 新建图书…",
@@ -3291,7 +3292,7 @@ const I18N = {
     "table_insert": "挿入",
     "table_col_prefix": "列",
     "table_cell_prefix": "セル",
-    "welcome_version": "バージョン 1.0.0-alpha.4",
+    "welcome_version": "バージョン 1.0.0-alpha.5",
     "welcome_tutorial_link": "PubCraft チュートリアルを表示",
     "welcome_shortcuts_link": "ヘルプとキーボードショートカット",
     "welcome_btn_new": "✨ 新規書籍…",
@@ -3692,7 +3693,7 @@ const I18N = {
     "table_insert": "Вставить",
     "table_col_prefix": "Столбец",
     "table_cell_prefix": "Ячейка",
-    "welcome_version": "Версия 1.0.0-alpha.4",
+    "welcome_version": "Версия 1.0.0-alpha.5",
     "welcome_tutorial_link": "Показать руководство PubCraft",
     "welcome_shortcuts_link": "Справка и сочетания клавиш",
     "welcome_btn_new": "✨ Новая книга…",
@@ -4093,7 +4094,7 @@ const I18N = {
     "table_insert": "إدراج",
     "table_col_prefix": "عمود",
     "table_cell_prefix": "خلية",
-    "welcome_version": "الإصدار 1.0.0-alpha.4",
+    "welcome_version": "الإصدار 1.0.0-alpha.5",
     "welcome_tutorial_link": "عرض دليل PubCraft التعليمي",
     "welcome_shortcuts_link": "المساعدة واختصارات لوحة المفاتيح",
     "welcome_btn_new": "✨ كتاب جديد…",
@@ -4742,6 +4743,7 @@ function renderBook() {
     const li = document.createElement("li");
     li.dataset.file = c.file;
     if (c.file === currentFile) li.classList.add("active");
+    if (c.missing) li.classList.add("is-missing");
     const num = document.createElement("span");
     num.className = "num";
     let icon = String(i + 1);
@@ -4785,6 +4787,14 @@ function renderBook() {
       sum.title = c.summary;
       meta.appendChild(sum);
     }
+
+    if (c.missing) {
+      const miss = document.createElement("span");
+      miss.className = "ch-missing";
+      miss.textContent = "⚠ file mancante";
+      miss.title = `Il file "${c.file}" non è più nella cartella. Ripristinalo oppure rimuovi la voce dalla lista.`;
+      meta.appendChild(miss);
+    }
     chInfo.appendChild(meta);
 
     const actions = document.createElement("div");
@@ -4827,9 +4837,13 @@ function renderBook() {
     x.type = "button";
     x.className = "x";
     x.textContent = "✕";
-    x.title = "Sposta in .cestina";
-    x.setAttribute("aria-label", "Sposta in .cestina");
-    x.addEventListener("click", (e) => { e.stopPropagation(); deleteChapter(c); });
+    x.title = c.missing ? "Rimuovi la voce dalla lista (il file non esiste)" : "Sposta in .cestina";
+    x.setAttribute("aria-label", x.title);
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (c.missing) forgetMissingChapter(c);
+      else deleteChapter(c);
+    });
 
     actions.append(btnUp, btnDown, x);
     li.append(num, chInfo, actions);
@@ -4937,6 +4951,49 @@ function updateDocVisibility() {
 /* ---------------------------------------------------------------- loading */
 
 let appPollStarted = false;
+let vaultRefreshTimer = null;
+
+// La cartella è cambiata fuori da PubCraft (file aggiunto, rinominato o
+// cancellato a mano): ricarichiamo l'elenco capitoli senza interrompere
+// l'editor. Il server ha già riconciliato book.yaml; qui rileggiamo lo stato.
+function scheduleVaultRefresh() {
+  if (vaultRefreshTimer) return;
+  vaultRefreshTimer = setTimeout(async () => {
+    vaultRefreshTimer = null;
+    if (isBuilding || isProjectSwitching || isLoadingChapter || cbDrag) return;
+    if (!$("modal")?.classList.contains("hidden")) return;
+    try {
+      await refreshState();
+      await reloadOpenChapterIfChanged();
+    } catch (_) {}
+  }, 700);
+}
+
+// Il file del capitolo aperto è cambiato su disco (editor esterno, altro tab):
+// ricarichiamo il testo solo se non ci sono modifiche locali non salvate.
+async function reloadOpenChapterIfChanged() {
+  if (!currentFile || dirty || saveTimer || savePromise || isLoadingChapter) return;
+  if (saveRevision !== lastSavedRevision) return;
+  if (isBuilding || isProjectSwitching) return;
+  try {
+    const res = await api("/api/chapter?file=" + encodeURIComponent(currentFile));
+    if (!res || res.content === undefined || !res.version) return;
+    if (res.version === fileVersion) return;
+    if (dirty || saveTimer || savePromise) return;
+    ta.value = res.content;
+    fileVersion = res.version;
+    dirty = false;
+    saveRevision = 0;
+    lastSavedRevision = 0;
+    notifyClientDirty();
+    updateWordCount();
+    renderPreview();
+    setState("Capitolo aggiornato da una modifica esterna");
+  } catch (_) {
+    // File rimosso o temporaneamente illeggibile: la lista lo segnalerà.
+  }
+}
+
 function startAppWatchSync() {
   if (appPollStarted) return;
   appPollStarted = true;
@@ -4954,6 +5011,7 @@ function startAppWatchSync() {
               if (currentVault && data.vault === currentVault) {
                 if (prevModTime && data.vaultModTime && data.vaultModTime !== prevModTime) {
                   markPublicationPreviewStale();
+                  scheduleVaultRefresh();
                 }
                 state.vaultModTime = data.vaultModTime;
               } else if (data.vault !== currentVault) {
@@ -5002,6 +5060,7 @@ window.addEventListener("focus", async () => {
       const prevModTime = (state && state.vaultModTime) || "";
       if (prevModTime && fresh.vaultModTime && fresh.vaultModTime !== prevModTime) {
         markPublicationPreviewStale();
+        scheduleVaultRefresh();
       }
       state = fresh;
     } else if (fresh.vault !== currentVault) {
@@ -6355,6 +6414,25 @@ async function deleteChapter(c) {
   }
 }
 
+async function forgetMissingChapter(c) {
+  if (isProjectSwitching || isBuilding) return;
+  try {
+    const res = await api("/api/forget-chapter", {
+      method: "POST", body: JSON.stringify({ file: c.file }),
+    });
+    if (res && res.book) {
+      state.book = res.book;
+      if (currentFile === c.file) {
+        currentFile = "";
+      }
+      renderBook();
+      if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") renderCorkboard();
+    }
+  } catch (e) {
+    showModal("Impossibile rimuovere la voce", String(e.message || e), [["Chiudi", hideModal]]);
+  }
+}
+
 async function kindleBuild() {
   if (!state.book) return;
   const dir = await chooseDir("Cartella dove salvare l'EPUB");
@@ -6996,6 +7074,213 @@ function setView(mode) {
 let corkboardFilter = "all";
 let corkboardSearchQuery = "";
 
+/* -----------------------------------------------------------------
+   Trascinamento delle schede della Lavagna
+   Usa Pointer Events invece dell'HTML5 drag-and-drop: quest'ultimo
+   accettava il rilascio solo se il puntatore era esattamente sopra
+   un'altra scheda (gli spazi vuoti e i margini della lavagna venivano
+   ignorati) e in diversi contesti non partiva affatto, lasciando la
+   scheda al suo posto. Qui la scheda segue il puntatore, una linea
+   verticale mostra il punto di inserimento e il rilascio funziona
+   ovunque nella lavagna, anche sotto l'ultima riga.
+   ----------------------------------------------------------------- */
+const CB_DRAG_THRESHOLD = 5;
+let cbDrag = null;
+
+function cbJustDragged() {
+  return isDraggingReorder || (Date.now() - lastDragEndTime < 300);
+}
+
+function cbCards(except) {
+  return Array.from(document.querySelectorAll("#corkboardGrid .cb-card"))
+    .filter((el) => el !== except);
+}
+
+function cbIsInteractiveTarget(target) {
+  if (!target || !target.closest) return false;
+  return !!target.closest("button, select, input, textarea, a, .cb-card-actions, .cb-card-status-select");
+}
+
+function cbPointerDown(ev, card, file) {
+  if (ev.button !== 0 || ev.pointerType === "touch") return;
+  if (cbIsInteractiveTarget(ev.target)) return;
+  if (!state?.book?.chapters) return;
+  const rect = card.getBoundingClientRect();
+  cbDrag = {
+    card,
+    file,
+    pointerId: ev.pointerId,
+    startX: ev.clientX,
+    startY: ev.clientY,
+    offsetX: ev.clientX - rect.left,
+    offsetY: ev.clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+    started: false,
+    ghost: null,
+    indicator: null,
+    beforeFile: null,
+  };
+  try { card.setPointerCapture(ev.pointerId); } catch {}
+  window.addEventListener("pointermove", cbPointerMove, { passive: false });
+  window.addEventListener("pointerup", cbPointerUp);
+  window.addEventListener("pointercancel", cbPointerCancel);
+  window.addEventListener("keydown", cbKeyDown, true);
+}
+
+function cbPointerMove(ev) {
+  const d = cbDrag;
+  if (!d || ev.pointerId !== d.pointerId) return;
+  if (!d.started) {
+    const dist = Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY);
+    if (dist < CB_DRAG_THRESHOLD) return;
+    cbBeginVisualDrag(d);
+  }
+  ev.preventDefault();
+  isDraggingReorder = true;
+  cbMoveGhost(d, ev.clientX, ev.clientY);
+  cbAutoScroll(ev.clientY);
+  cbUpdateDropTarget(d, ev.clientX, ev.clientY);
+}
+
+function cbBeginVisualDrag(d) {
+  d.started = true;
+  d.card.classList.add("cb-dragging");
+  document.body.classList.add("cb-drag-active");
+
+  const ghost = d.card.cloneNode(true);
+  ghost.removeAttribute("id");
+  ghost.classList.add("cb-drag-ghost");
+  ghost.style.width = `${d.width}px`;
+  ghost.style.height = `${d.height}px`;
+  document.body.appendChild(ghost);
+  d.ghost = ghost;
+
+  const indicator = document.createElement("div");
+  indicator.className = "cb-drop-indicator";
+  indicator.style.display = "none";
+  document.body.appendChild(indicator);
+  d.indicator = indicator;
+}
+
+function cbMoveGhost(d, x, y) {
+  if (!d.ghost) return;
+  d.ghost.style.left = `${Math.round(x - d.offsetX)}px`;
+  d.ghost.style.top = `${Math.round(y - d.offsetY)}px`;
+}
+
+// Calcola dove finirebbe la scheda: si ancora alla scheda *visibile* davanti
+// alla quale inserire (null = in fondo). Ancorarsi al file e non a un indice
+// mantiene il risultato corretto anche con filtri o ricerca attivi.
+function cbUpdateDropTarget(d, x, y) {
+  const cards = cbCards(d.card);
+  if (!cards.length) {
+    d.beforeFile = null;
+    if (d.indicator) d.indicator.style.display = "none";
+    return;
+  }
+
+  let best = null;
+  cards.forEach((el, i) => {
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const dist = (x - cx) ** 2 + (y - cy) ** 2;
+    if (!best || dist < best.dist) best = { i, dist, cx, cy, r };
+  });
+
+  const sameRow = y >= best.r.top && y <= best.r.bottom;
+  const after = sameRow ? x > best.cx : y > best.cy;
+
+  let anchorEl;
+  let side;
+  if (after) {
+    anchorEl = cards[best.i + 1];
+    if (anchorEl) {
+      d.beforeFile = anchorEl.dataset.file || null;
+      side = "left";
+    } else {
+      d.beforeFile = null;
+      anchorEl = cards[cards.length - 1];
+      side = "right";
+    }
+  } else {
+    anchorEl = cards[best.i];
+    d.beforeFile = anchorEl.dataset.file || null;
+    side = "left";
+  }
+
+  if (d.indicator && anchorEl) {
+    const r = anchorEl.getBoundingClientRect();
+    const left = side === "left" ? r.left - 8 : r.right + 8;
+    d.indicator.style.display = "block";
+    d.indicator.style.left = `${Math.round(left) - 2}px`;
+    d.indicator.style.top = `${Math.round(r.top)}px`;
+    d.indicator.style.height = `${Math.round(r.height)}px`;
+  }
+}
+
+function cbAutoScroll(clientY) {
+  const pane = $("corkboardPane");
+  if (!pane) return;
+  const rect = pane.getBoundingClientRect();
+  const edge = 70;
+  const maxStep = 22;
+  if (clientY < rect.top + edge) {
+    const k = Math.min(1, (rect.top + edge - clientY) / edge);
+    pane.scrollTop -= Math.ceil(maxStep * k);
+  } else if (clientY > rect.bottom - edge) {
+    const k = Math.min(1, (clientY - (rect.bottom - edge)) / edge);
+    pane.scrollTop += Math.ceil(maxStep * k);
+  }
+}
+
+function cbEndVisualDrag(d) {
+  if (d.ghost) d.ghost.remove();
+  if (d.indicator) d.indicator.remove();
+  d.card.classList.remove("cb-dragging");
+  document.body.classList.remove("cb-drag-active");
+  try { d.card.releasePointerCapture(d.pointerId); } catch {}
+  window.removeEventListener("pointermove", cbPointerMove);
+  window.removeEventListener("pointerup", cbPointerUp);
+  window.removeEventListener("pointercancel", cbPointerCancel);
+  window.removeEventListener("keydown", cbKeyDown, true);
+  d.ghost = null;
+  d.indicator = null;
+}
+
+async function cbPointerUp(ev) {
+  const d = cbDrag;
+  if (!d || ev.pointerId !== d.pointerId) return;
+  cbDrag = null;
+  const wasDragging = d.started;
+  const beforeFile = d.beforeFile;
+  cbEndVisualDrag(d);
+  if (!wasDragging) return;
+  isDraggingReorder = false;
+  lastDragEndTime = Date.now();
+  await reorderChaptersBefore(d.file, beforeFile);
+}
+
+function cbPointerCancel(ev) {
+  const d = cbDrag;
+  if (!d || (ev && ev.pointerId !== d.pointerId)) return;
+  cbDrag = null;
+  const wasDragging = d.started;
+  cbEndVisualDrag(d);
+  if (wasDragging) {
+    isDraggingReorder = false;
+    lastDragEndTime = Date.now();
+  }
+}
+
+function cbKeyDown(ev) {
+  if (ev.key !== "Escape" || !cbDrag) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  cbPointerCancel(null);
+}
+
 function renderCorkboard() {
   const grid = $("corkboardGrid");
   if (!grid) return;
@@ -7039,10 +7324,9 @@ function renderCorkboard() {
   filtered.forEach(({ c, originalIndex }) => {
     const card = document.createElement("div");
     const st = (c.status || "bozza").toLowerCase();
-    card.className = `cb-card status-${st}`;
+    card.className = `cb-card status-${st}${c.missing ? " is-missing" : ""}`;
     card.dataset.file = c.file;
     card.dataset.index = String(originalIndex);
-    card.draggable = true;
 
     // Colore barra stato superiore
     const statusBar = document.createElement("div");
@@ -7100,6 +7384,7 @@ function renderCorkboard() {
     synEl.title = "Clicca per modificare la sinossi";
     synEl.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (cbJustDragged()) return;
       openSynopsisModal(c.file);
     });
 
@@ -7113,7 +7398,13 @@ function renderCorkboard() {
     const wcSpan = document.createElement("span");
     wcSpan.className = "cb-card-wc";
     const words = typeof c.words === "number" ? c.words : 0;
-    wcSpan.textContent = `📝 ${words.toLocaleString(currentLang)} parole`;
+    wcSpan.textContent = c.missing
+      ? "⚠ file mancante"
+      : `📝 ${words.toLocaleString(currentLang)} parole`;
+    if (c.missing) {
+      wcSpan.classList.add("cb-card-missing");
+      wcSpan.title = `Il file "${c.file}" non è più nella cartella.`;
+    }
 
     const actionsGroup = document.createElement("div");
     actionsGroup.className = "cb-card-actions";
@@ -7168,53 +7459,21 @@ function renderCorkboard() {
 
     // Clic su tutta la scheda: apri nell'editor (se non stiamo trascinando)
     card.addEventListener("click", () => {
-      if (isDraggingReorder || (Date.now() - lastDragEndTime < 300)) return;
+      if (cbJustDragged()) return;
+      if (c.missing) {
+        showModal("File mancante",
+          `Il file "${c.file}" non è più nella cartella del libro. Se l'hai rinominato, PubCraft lo ricollega automaticamente al prossimo aggiornamento. Altrimenti puoi rimuovere la voce dalla lista: il testo non viene toccato.`,
+          [["Rimuovi la voce", () => forgetMissingChapter(c), "danger"], ["Chiudi", hideModal]]);
+        return;
+      }
       openChapter(c.file);
       setView("edit");
     });
 
-    // Drag and drop per riordinare
-    card.addEventListener("dragstart", (e) => {
-      isDraggingReorder = true;
-      e.dataTransfer.setData("text/plain", c.file);
-      e.dataTransfer.effectAllowed = "move";
-      card.classList.add("dragging");
-    });
-    card.addEventListener("dragend", () => {
-      isDraggingReorder = false;
-      lastDragEndTime = Date.now();
-      card.classList.remove("dragging");
-      document.querySelectorAll(".cb-card").forEach((el) => {
-        el.classList.remove("drag-over", "drag-over-left", "drag-over-right");
-      });
-    });
-    card.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      const rect = card.getBoundingClientRect();
-      const relX = e.clientX - rect.left;
-      if (relX < rect.width / 2) {
-        card.classList.add("drag-over-left");
-        card.classList.remove("drag-over-right");
-      } else {
-        card.classList.add("drag-over-right");
-        card.classList.remove("drag-over-left");
-      }
-      card.classList.add("drag-over");
-    });
-    card.addEventListener("dragleave", () => {
-      card.classList.remove("drag-over", "drag-over-left", "drag-over-right");
-    });
-    card.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      const insertBefore = card.classList.contains("drag-over-left");
-      card.classList.remove("drag-over", "drag-over-left", "drag-over-right");
-      lastDragEndTime = Date.now();
-      const srcFile = e.dataTransfer.getData("text/plain");
-      if (srcFile && srcFile !== c.file) {
-        await reorderChaptersByDrop(srcFile, c.file, insertBefore);
-      }
-    });
+    // Trascinamento per riordinare (Pointer Events, vedi cbPointerDown).
+    // Non usiamo più l'HTML5 drag-and-drop: pretendeva il rilascio esattamente
+    // sopra un'altra scheda e in alcuni contesti non partiva affatto.
+    card.addEventListener("pointerdown", (e) => cbPointerDown(e, card, c.file));
 
     grid.appendChild(card);
   });
@@ -7302,18 +7561,9 @@ async function setChapterStatus(file, newStatus) {
   if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") renderCorkboard();
 }
 
-async function moveChapterByDelta(file, delta) {
-  if (!state?.book?.chapters) return;
-  const chapters = [...state.book.chapters];
-  const idx = chapters.findIndex((x) => x.file === file);
-  if (idx === -1) return;
-  const newIdx = idx + delta;
-  if (newIdx < 0 || newIdx >= chapters.length) return;
-
-  const [moved] = chapters.splice(idx, 1);
-  chapters.splice(newIdx, 0, moved);
+async function persistChapterOrder(chapters) {
+  if (!state?.book || !chapters) return;
   state.book.chapters = chapters;
-
   renderBook();
   if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
     renderCorkboard();
@@ -7338,42 +7588,55 @@ async function moveChapterByDelta(file, delta) {
   }
 }
 
-async function reorderChaptersByDrop(srcFile, targetFile, insertBefore) {
-  if (!state?.book?.chapters || !srcFile || !targetFile || srcFile === targetFile) return;
+async function moveChapterByDelta(file, delta) {
+  if (!state?.book?.chapters) return;
+  const chapters = [...state.book.chapters];
+  const idx = chapters.findIndex((x) => x.file === file);
+  if (idx === -1) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= chapters.length) return;
+
+  const [moved] = chapters.splice(idx, 1);
+  chapters.splice(newIdx, 0, moved);
+  await persistChapterOrder(chapters);
+}
+
+// beforeFile = file della scheda davanti alla quale inserire; null = in fondo.
+// L'ancoraggio al file (e non all'indice) resta corretto anche quando la
+// lavagna mostra solo un sottoinsieme di capitoli (filtro stato o ricerca).
+async function reorderChaptersBefore(srcFile, beforeFile) {
+  if (!state?.book?.chapters || !srcFile) return;
+  if (beforeFile && beforeFile === srcFile) return;
   const chapters = [...state.book.chapters];
   const srcIdx = chapters.findIndex((x) => x.file === srcFile);
   if (srcIdx === -1) return;
   const [moved] = chapters.splice(srcIdx, 1);
-  let targetIdx = chapters.findIndex((x) => x.file === targetFile);
+
+  let target = chapters.length;
+  if (beforeFile) {
+    const beforeIdx = chapters.findIndex((x) => x.file === beforeFile);
+    if (beforeIdx !== -1) target = beforeIdx;
+  }
+  chapters.splice(target, 0, moved);
+
+  const unchanged = chapters.every((x, i) => x.file === state.book.chapters[i].file);
+  if (unchanged) return;
+  await persistChapterOrder(chapters);
+}
+
+async function reorderChaptersByDrop(srcFile, targetFile, insertBefore) {
+  if (!state?.book?.chapters || !srcFile || !targetFile || srcFile === targetFile) return;
+  if (insertBefore) {
+    await reorderChaptersBefore(srcFile, targetFile);
+    return;
+  }
+  // "dopo target" = davanti alla scheda successiva al target, saltando la
+  // scheda stessa che si sta trascinando.
+  const chapters = state.book.chapters;
+  const targetIdx = chapters.findIndex((x) => x.file === targetFile);
   if (targetIdx === -1) return;
-  if (!insertBefore) {
-    targetIdx += 1;
-  }
-  chapters.splice(targetIdx, 0, moved);
-  state.book.chapters = chapters;
-
-  renderBook();
-  if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
-    renderCorkboard();
-  }
-
-  try {
-    const res = await api("/api/reorder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files: chapters.map((x) => x.file) }),
-    });
-    if (res && res.book) {
-      state.book = res.book;
-      renderBook();
-      if (typeof currentViewMode !== "undefined" && currentViewMode === "cards") {
-        renderCorkboard();
-      }
-    }
-  } catch (err) {
-    console.error("Errore riordino capitoli:", err);
-    await refreshState();
-  }
+  const next = chapters.slice(targetIdx + 1).find((x) => x.file !== srcFile);
+  await reorderChaptersBefore(srcFile, next ? next.file : null);
 }
 
 async function reorderChaptersByFiles(srcFile, targetFile) {

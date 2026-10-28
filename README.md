@@ -9,17 +9,17 @@ PubCraft is a free, open-source writing and publishing tool with a local browser
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Latest: 1.0.0-alpha.4 — Universal Mac app, native on Intel and Apple Silicon.**
+**Latest: 1.0.0-alpha.5 — Universal Mac app, native on Intel and Apple Silicon.**
 
 ### Download
 
 | Platform | Downloads |
 | --- | --- |
-| **macOS Universal (Intel + Apple Silicon)** | **[PubCraft.app ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-macos-universal.app.zip)** · [DMG app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4.dmg) · [PKG installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4.pkg) · [Portable tools](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-macos.tar.gz) |
-| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-Setup-1.0.0-alpha.4.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-windows-x64.zip) |
-| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/PubCraft-1.0.0-alpha.4-linux-x64.tar.gz) |
+| **macOS Universal (Intel + Apple Silicon)** | **[PubCraft.app ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-macos-universal.app.zip)** · [DMG app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5.dmg) · [PKG installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5.pkg) · [Portable tools](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-macos.tar.gz) |
+| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-Setup-1.0.0-alpha.5.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-windows-x64.zip) |
+| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-linux-x64.tar.gz) |
 
-[Release notes and all files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.4) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.4/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
+[Release notes and all files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.5) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
 
 **Mac installation:** extract the app ZIP and drag `PubCraft.app` into Applications, or use the DMG as usual. **macOS 13 Ventura or newer; no Rosetta required.** The launcher, CLI, GUI and PDF helper all include both CPU architectures. Quit the old app before replacing it.
 
@@ -43,7 +43,7 @@ The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows ins
 
 **Included from alpha.3:** Universal 2 Mac app and portable tools (Intel + Apple Silicon native, no Rosetta required, macOS 13+ minimum).
 
-See the [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md) and [validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.4.md).
+See the [alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md), [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md) and [validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
 
 ## Why PubCraft?
 

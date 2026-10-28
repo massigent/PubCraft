@@ -2,6 +2,40 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
+## [1.0.0-alpha.5]
+
+### Fixed
+
+- **Lavagna a Schede:** chapter cards can now be dragged anywhere on the board.
+  The previous HTML5 drag-and-drop only accepted a drop released exactly on top
+  of another card, so dropping on empty board space or in the gap between cards
+  silently did nothing and the card snapped back. Dragging now uses Pointer
+  Events: the card follows the cursor, a vertical indicator shows the insertion
+  point, drops work on cards, gaps, empty space and below the last row, the
+  board auto-scrolls near the edges, `Esc` cancels, and filtered/searched views
+  keep the correct saved order.
+- **Regression test honesty:** `tests/test_chapter_reorder.cjs` no longer calls
+  `window.reorderChaptersByDrop()` directly; it performs real mouse drags and
+  fails against the previous implementation.
+
+### Added
+
+- **Folder ↔ `book.yaml` synchronization (non-destructive).** `.md` files added
+  to the book folder outside PubCraft are appended to `book.yaml` automatically
+  (title from front-matter or first heading, natural sort), both when a book is
+  opened and while the app is running; the chapter list refreshes without a
+  reload. Files renamed outside PubCraft are re-linked in place by their
+  front-matter `id`, so no duplicate chapter is created. Chapters whose file
+  disappeared stay in the list, flagged as `missing` in the sidebar and
+  Corkboard, and can be dropped from `book.yaml` only on explicit request
+  (`/api/forget-chapter`, no file is deleted).
+- New browser suite `tests/test_vault_sync.cjs` and Go tests
+  (`src/pubcraftgui/vault_sync_test.go`) covering append, rename by `id`,
+  missing-file marking, reserved/hidden/nested file exclusion, idempotency and
+  orphan-entry removal.
+
+Details: [bilingual alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md).
+
 ## [1.0.0-alpha.4]
 
 - Re-introduced and polished chapter movement controls across all views.

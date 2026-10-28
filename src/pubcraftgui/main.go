@@ -50,6 +50,9 @@ type Chapter struct {
 	Words   int    `json:"words,omitempty"`
 	Summary string `json:"summary,omitempty"`
 	Status  string `json:"status,omitempty"`
+	// Missing indica che il file elencato in book.yaml non esiste (più) nella
+	// cartella: la voce resta in elenco finché l'autore non decide cosa fare.
+	Missing bool `json:"missing,omitempty"`
 }
 
 type Book struct {
@@ -552,8 +555,10 @@ func populateChapterStats(b *Book, vDir string) {
 			b.Chapters[i].Words = 0
 			b.Chapters[i].Summary = ""
 			b.Chapters[i].Status = ""
+			b.Chapters[i].Missing = !chapterFileExists(vDir, b.Chapters[i].File)
 			continue
 		}
+		b.Chapters[i].Missing = false
 		w, sum, st := parseChapterWordsAndSummary(data)
 		b.Chapters[i].Words = w
 		b.Chapters[i].Summary = sum
@@ -567,7 +572,17 @@ func writeBookYAML(b *Book) error {
 	return writeBookYAMLAt(bookYAMLPath(), b)
 }
 
+// bookWriteMu serializza tutte le scritture di book.yaml (azioni utente e
+// riconciliazione automatica con la cartella) per non perdere aggiornamenti.
+var bookWriteMu sync.Mutex
+
 func writeBookYAMLAt(p string, b *Book) error {
+	bookWriteMu.Lock()
+	defer bookWriteMu.Unlock()
+	return writeBookYAMLAtLocked(p, b)
+}
+
+func writeBookYAMLAtLocked(p string, b *Book) error {
 	if p == "" {
 		return errors.New("nessun vault aperto")
 	}
@@ -875,6 +890,145 @@ func autoInitVaultFromMarkdown(dir string) *Book {
 	return bk
 }
 
+// extractMarkdownID legge il campo id del front-matter di un capitolo. Serve a
+// riconoscere un file rinominato fuori da PubCraft senza perdere la posizione.
+func extractMarkdownID(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	s := stripBOM(string(data))
+	head, _, ok := splitFrontmatter(s)
+	if !ok {
+		return ""
+	}
+	for _, l := range strings.Split(head, "\n")[1:] {
+		l = strings.TrimSpace(l)
+		if l == "---" {
+			break
+		}
+		if k, v, ok := cutKV(l); ok && k == "id" {
+			return strings.Trim(v, `"'`)
+		}
+	}
+	return ""
+}
+
+func chapterFileExists(vDir, name string) bool {
+	p, err := containedFile(vDir, name, true)
+	if err != nil {
+		return false
+	}
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// vaultChapterFiles elenca i .md di primo livello che possono essere capitoli:
+// esclude i file riservati (book.md), i nascosti, le sottocartelle (.cestina,
+// images, ...) e il README quando ci sono altri capitoli.
+func vaultChapterFiles(vDir string) []string {
+	entries, err := os.ReadDir(vDir)
+	if err != nil {
+		return nil
+	}
+	var files []string
+	hasOther := false
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !isMarkdownFile(e.Name()) || reservedFiles[strings.ToLower(e.Name())] {
+			continue
+		}
+		files = append(files, e.Name())
+		base := strings.ToLower(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())))
+		if base != "readme" {
+			hasOther = true
+		}
+	}
+	if hasOther {
+		filtered := make([]string, 0, len(files))
+		for _, f := range files {
+			base := strings.ToLower(strings.TrimSuffix(f, filepath.Ext(f)))
+			if base != "readme" {
+				filtered = append(filtered, f)
+			}
+		}
+		files = filtered
+	}
+	sortNatural(files)
+	return files
+}
+
+// reconcileVaultChapters allinea l'elenco capitoli di book.yaml con i file
+// realmente presenti nella cartella, senza mai eliminare voci:
+//   - un file nuovo il cui id front-matter corrisponde a un capitolo il cui
+//     file non esiste più viene trattato come una rinomina (stessa posizione,
+//     stesso id, stesso titolo se assente);
+//   - gli altri file nuovi vengono accodati in fondo, in ordine naturale;
+//   - i capitoli con file mancante restano in elenco e vengono marcati come
+//     tali (nessun dato perso: l'autore decide se rimuovere la voce).
+//
+// Restituisce true se l'elenco è cambiato e va riscritto book.yaml.
+func reconcileVaultChapters(b *Book, vDir string) bool {
+	if b == nil || vDir == "" {
+		return false
+	}
+	diskFiles := vaultChapterFiles(vDir)
+	if len(diskFiles) == 0 {
+		return false
+	}
+	known := make(map[string]bool, len(b.Chapters))
+	for _, c := range b.Chapters {
+		known[c.File] = true
+	}
+
+	changed := false
+
+	// 1) Rinomine riconosciute tramite id del front-matter.
+	for _, f := range diskFiles {
+		if known[f] {
+			continue
+		}
+		id := extractMarkdownID(filepath.Join(vDir, f))
+		if id == "" {
+			continue
+		}
+		for i := range b.Chapters {
+			c := &b.Chapters[i]
+			if known[f] || c.ID != id || c.File == f {
+				continue
+			}
+			if chapterFileExists(vDir, c.File) {
+				continue // id duplicato, ma il file originale è ancora al suo posto
+			}
+			c.File = f
+			if title := extractMarkdownTitle(filepath.Join(vDir, f), f); title != "" {
+				c.Title = title
+			}
+			known[f] = true
+			changed = true
+			break
+		}
+	}
+
+	// 2) File nuovi: accodati in fondo, in ordine naturale.
+	for _, f := range diskFiles {
+		if known[f] {
+			continue
+		}
+		ch := chapterFromMarkdownFile(vDir, f)
+		if id := extractMarkdownID(filepath.Join(vDir, f)); id != "" {
+			ch.ID = id
+		}
+		b.Chapters = append(b.Chapters, ch)
+		known[f] = true
+		changed = true
+	}
+
+	return changed
+}
+
 func loadBook() *Book {
 	vDir := getVaultDir()
 	if vDir == "" {
@@ -886,6 +1040,13 @@ func loadBook() *Book {
 	}
 	b, err := parseBookYAML(p)
 	if err == nil && b != nil {
+		// Riconciliazione con la cartella: i .md aggiunti o rinominati fuori da
+		// PubCraft entrano nell'elenco capitoli (i mancanti vengono solo marcati).
+		if reconcileVaultChapters(b, vDir) {
+			if werr := writeBookYAMLAt(p, b); werr != nil {
+				fmt.Fprintf(os.Stderr, "book.yaml non aggiornato dopo la sincronizzazione: %v\n", werr)
+			}
+		}
 		populateChapterStats(b, vDir)
 		return b
 	}
@@ -3135,6 +3296,54 @@ func moveToTrash(vDir, name, srcPath string) error {
 		}
 	}
 	return os.Rename(srcPath, trashPath)
+}
+
+// apiForgetChapter rimuove da book.yaml la sola voce di un capitolo il cui file
+// non esiste più (rinominato o cancellato fuori da PubCraft). Non tocca il
+// disco: se il file è ancora presente la richiesta viene rifiutata.
+func apiForgetChapter(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File string `json:"file"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, "Richiesta non valida")
+		return
+	}
+	name := filepath.Base(strings.TrimSpace(req.File))
+	if name == "" || name == "." || !isMarkdownFile(name) {
+		jsonErr(w, 400, "Capitolo non valido")
+		return
+	}
+	b := loadBook()
+	if b == nil {
+		jsonErr(w, 400, "Nessun libro aperto")
+		return
+	}
+	vDir := getVaultDir()
+	if chapterFileExists(vDir, name) {
+		jsonErr(w, 409, "Il file esiste ancora: usa l'eliminazione (cestina) invece di rimuovere solo la voce")
+		return
+	}
+	idx := -1
+	for i, c := range b.Chapters {
+		if c.File == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		jsonErr(w, 404, "Capitolo non presente in book.yaml")
+		return
+	}
+	b.Chapters = append(b.Chapters[:idx], b.Chapters[idx+1:]...)
+	if err := writeBookYAML(b); err != nil {
+		jsonErr(w, 500, "Salvataggio book.yaml fallito: "+err.Error())
+		return
+	}
+	populateChapterStats(b, vDir)
+	invalidateVaultFingerprint()
+	broadcastWatchChange()
+	writeJSON(w, map[string]any{"ok": true, "book": b})
 }
 
 func apiDeleteChapter(w http.ResponseWriter, r *http.Request) {
@@ -6257,6 +6466,7 @@ func main() {
 	mux.HandleFunc("/api/save", apiSave)
 	mux.HandleFunc("/api/newchapter", apiNewChapter)
 	mux.HandleFunc("/api/reorder", apiReorder)
+	mux.HandleFunc("/api/forget-chapter", apiForgetChapter)
 	mux.HandleFunc("/api/deletechapter", apiDeleteChapter)
 	mux.HandleFunc("/api/build", apiBuild)
 	mux.HandleFunc("/api/publication-preview", apiPublicationPreview)
@@ -6401,6 +6611,7 @@ func securityMiddleware(next http.Handler) http.Handler {
 			"/api/import", "/api/addcover", "/api/delcover", "/api/useasepubcover",
 			"/api/setstyle", "/api/setfont", "/api/setscenebreak", "/api/setopening",
 			"/api/importdocx", "/api/import-manuscript", "/api/newchapter", "/api/reorder", "/api/deletechapter",
+			"/api/forget-chapter",
 			"/api/settitle", "/api/setchaptertitle", "/api/note", "/api/delnote", "/api/note-to-chapter",
 			"/api/build", "/api/obsidian", "/api/openpath", "/api/opencover", "/api/reveal",
 		}

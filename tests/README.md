@@ -12,7 +12,7 @@ go -C src/pubcraftgui test -run '^$' -fuzz '^FuzzParsePDFData$' -fuzztime=3s -pa
 
 ## Browser tests
 
-The canonical browser test suite consists of 15 test runners:
+The canonical browser test suite consists of 16 test runners:
 1. `test_preview_geometry.cjs`: Preview panel geometry and layout stability.
 2. `test_audit4_fixes.cjs`: Concurrency, rapid chapter switching, and cross-vault build isolation regressions.
 3. `test_languages_preview.cjs`: UI localization (10 languages), RTL layout, Watch sync, and print settings.
@@ -28,6 +28,7 @@ The canonical browser test suite consists of 15 test runners:
 13. `test_topbar_responsiveness.cjs`: Topbar and docbar responsiveness across breakpoints, unified dropdowns, and compact layouts.
 14. `test_line_breaks.cjs`: Single line breaks preserved as visual paragraphs in book preview rendering.
 15. `test_residual_selection.cjs`: Selecting/importing Markdown files in a folder that is already a book preserves chapters, IDs, titles, order and custom metadata; invalid `book.yaml` is rejected byte-for-byte.
+16. `test_vault_sync.cjs`: Folder ↔ `book.yaml` synchronization (non-destructive policy): `.md` files added or renamed outside PubCraft are picked up automatically (renames matched by front-matter `id`), missing files are flagged without dropping the entry, and orphan entries are removed only on explicit request.
 
 Execute via either Makefile or npm:
 

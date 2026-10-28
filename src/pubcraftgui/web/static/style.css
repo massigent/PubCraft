@@ -472,6 +472,23 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 #chapterList li:hover { background: #efe9dd; }
 #chapterList li.active { border-left-color: var(--accent); background: var(--panel); }
+#chapterList li.is-missing .t { opacity: 0.55; }
+#chapterList .ch-missing {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+body.dark-mode #chapterList .ch-missing {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
 #chapterList li.dragging { opacity: 0.35; background: var(--panel2); }
 #chapterList li.drag-over-top { border-top: 2px solid var(--accent) !important; }
 #chapterList li.drag-over-bottom { border-bottom: 2px solid var(--accent) !important; }
@@ -495,8 +512,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 #chapterList .ch-sum {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; font-style: italic; opacity: 0.75;
-}
-#chapterList .ch-sum::before {
+}#chapterList .ch-sum::before {
   content: "• ";
   opacity: 0.6;
 }
@@ -2814,13 +2830,41 @@ body.dark-mode .cb-card {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
 }
 
-.cb-card.dragging {
-  opacity: 0.45;
-  transform: scale(0.97);
+.cb-card.cb-dragging {
+  opacity: 0.32;
+  transform: none;
+  box-shadow: none;
+  border-style: dashed;
 }
 
-.cb-card.drag-over {
-  border: 2px dashed var(--accent);
+/* Durante il trascinamento il cursore resta "in presa" su tutta la lavagna */
+body.cb-drag-active,
+body.cb-drag-active * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+/* Anteprima della scheda che segue il puntatore */
+.cb-drag-ghost {
+  position: fixed;
+  z-index: 3000;
+  pointer-events: none;
+  opacity: 0.94;
+  transform: rotate(-1.2deg) scale(1.02);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--accent);
+  margin: 0 !important;
+}
+
+/* Linea verticale che mostra il punto di inserimento */
+.cb-drop-indicator {
+  position: fixed;
+  z-index: 2999;
+  width: 4px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.75), 0 0 14px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
 }
 
 /* Colore stato capitolo sul bordo superiore */
@@ -2834,6 +2878,18 @@ body.dark-mode .cb-card {
 .cb-card.status-bozza .cb-card-status-bar { background: #f59e0b; }
 .cb-card.status-revisione .cb-card-status-bar { background: #3b82f6; }
 .cb-card.status-finale .cb-card-status-bar { background: #10b981; }
+
+/* Scheda il cui file non esiste più nella cartella */
+.cb-card.is-missing {
+  border: 1px dashed #b45309;
+}
+
+.cb-card-missing {
+  color: #b45309;
+  font-weight: 600;
+}
+
+body.dark-mode .cb-card-missing { color: #fbbf24; }
 
 .cb-card-header {
   padding: 12px 14px 8px 14px;
@@ -3033,14 +3089,6 @@ body.dark-mode .cb-card-footer {
   opacity: 0.25;
   cursor: not-allowed;
   pointer-events: none;
-}
-
-.cb-card.drag-over-left {
-  border-left: 3px solid var(--accent) !important;
-}
-
-.cb-card.drag-over-right {
-  border-right: 3px solid var(--accent) !important;
 }
 
 body.dark-mode .cb-card-move-btn {
