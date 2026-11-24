@@ -1,0 +1,18 @@
+title: "TOC After Chapters"
+author: "Jane Doe"
+language: "en"
+style: "classic"
+font: "ebgaramond"
+trim: "6x9"
+chapters:
+  - file: "01.md"
+    id: "ch-1"
+    title: "First Chapter"
+    type: "chapter"
+  - file: "02.md"
+    id: "ch-2"
+    title: "Second Chapter"
+    type: "chapter"
+toc:
+  subheads: true
+  pagenumbers: false

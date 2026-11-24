@@ -519,7 +519,7 @@ const I18N = {
     "table_insert": "Insert",
     "table_col_prefix": "Column",
     "table_cell_prefix": "Cell",
-    "welcome_version": "Version 1.0.0-alpha.5",
+    "welcome_version": "Version 1.0.0-alpha.6",
     "welcome_tutorial_link": "Show PubCraft Tutorial",
     "welcome_shortcuts_link": "Open Help & Shortcuts",
     "welcome_btn_new": "✨ New Book…",
@@ -920,7 +920,7 @@ const I18N = {
     "table_insert": "Inserisci",
     "table_col_prefix": "Colonna",
     "table_cell_prefix": "Cella",
-    "welcome_version": "Versione 1.0.0-alpha.5",
+    "welcome_version": "Versione 1.0.0-alpha.6",
     "welcome_tutorial_link": "Mostra introduzione a PubCraft",
     "welcome_shortcuts_link": "Guida e scorciatoie da tastiera",
     "welcome_btn_new": "✨ Nuovo Libro…",
@@ -1287,7 +1287,7 @@ const I18N = {
     "table_insert": "Insertar",
     "table_col_prefix": "Columna",
     "table_cell_prefix": "Celda",
-    "welcome_version": "Versión 1.0.0-alpha.5",
+    "welcome_version": "Versión 1.0.0-alpha.6",
     "welcome_tutorial_link": "Mostrar tutorial de PubCraft",
     "welcome_shortcuts_link": "Ayuda y atajos de teclado",
     "welcome_btn_new": "✨ Nuevo Libro…",
@@ -1688,7 +1688,7 @@ const I18N = {
     "table_insert": "Insérer",
     "table_col_prefix": "Colonne",
     "table_cell_prefix": "Cellule",
-    "welcome_version": "Version 1.0.0-alpha.5",
+    "welcome_version": "Version 1.0.0-alpha.6",
     "welcome_tutorial_link": "Afficher le didacticiel PubCraft",
     "welcome_shortcuts_link": "Aide et raccourcis clavier",
     "welcome_btn_new": "✨ Nouveau Livre…",
@@ -2089,7 +2089,7 @@ const I18N = {
     "table_insert": "Einfügen",
     "table_col_prefix": "Spalte",
     "table_cell_prefix": "Zelle",
-    "welcome_version": "Version 1.0.0-alpha.5",
+    "welcome_version": "Version 1.0.0-alpha.6",
     "welcome_tutorial_link": "PubCraft-Tutorial anzeigen",
     "welcome_shortcuts_link": "Hilfe & Tastaturkürzel",
     "welcome_btn_new": "✨ Neues Buch…",
@@ -2490,7 +2490,7 @@ const I18N = {
     "table_insert": "Inserir",
     "table_col_prefix": "Coluna",
     "table_cell_prefix": "Célula",
-    "welcome_version": "Versão 1.0.0-alpha.5",
+    "welcome_version": "Versão 1.0.0-alpha.6",
     "welcome_tutorial_link": "Mostrar tutorial do PubCraft",
     "welcome_shortcuts_link": "Ajuda e atalhos de teclado",
     "welcome_btn_new": "✨ Novo Livro…",
@@ -2891,7 +2891,7 @@ const I18N = {
     "table_insert": "插入",
     "table_col_prefix": "列",
     "table_cell_prefix": "单元格",
-    "welcome_version": "版本 1.0.0-alpha.5",
+    "welcome_version": "版本 1.0.0-alpha.6",
     "welcome_tutorial_link": "显示 PubCraft 教程",
     "welcome_shortcuts_link": "帮助与键盘快捷键",
     "welcome_btn_new": "✨ 新建图书…",
@@ -3292,7 +3292,7 @@ const I18N = {
     "table_insert": "挿入",
     "table_col_prefix": "列",
     "table_cell_prefix": "セル",
-    "welcome_version": "バージョン 1.0.0-alpha.5",
+    "welcome_version": "バージョン 1.0.0-alpha.6",
     "welcome_tutorial_link": "PubCraft チュートリアルを表示",
     "welcome_shortcuts_link": "ヘルプとキーボードショートカット",
     "welcome_btn_new": "✨ 新規書籍…",
@@ -3693,7 +3693,7 @@ const I18N = {
     "table_insert": "Вставить",
     "table_col_prefix": "Столбец",
     "table_cell_prefix": "Ячейка",
-    "welcome_version": "Версия 1.0.0-alpha.5",
+    "welcome_version": "Версия 1.0.0-alpha.6",
     "welcome_tutorial_link": "Показать руководство PubCraft",
     "welcome_shortcuts_link": "Справка и сочетания клавиш",
     "welcome_btn_new": "✨ Новая книга…",
@@ -4094,7 +4094,7 @@ const I18N = {
     "table_insert": "إدراج",
     "table_col_prefix": "عمود",
     "table_cell_prefix": "خلية",
-    "welcome_version": "الإصدار 1.0.0-alpha.5",
+    "welcome_version": "الإصدار 1.0.0-alpha.6",
     "welcome_tutorial_link": "عرض دليل PubCraft التعليمي",
     "welcome_shortcuts_link": "المساعدة واختصارات لوحة المفاتيح",
     "welcome_btn_new": "✨ كتاب جديد…",
@@ -5334,6 +5334,27 @@ function prefixNumberLines(text, start, end) {
   return newLines.join("\n");
 }
 
+// Inserisce un blocco Markdown (tabella, interruzione di scena) su righe
+// proprie dopo la riga corrente, senza sostituire un'eventuale selezione.
+// Sostituire la selezione è corretto per il markup inline (grassetto, link),
+// non per un blocco: dopo un incolla-immagine il segnaposto della didascalia
+// resta selezionato, e una tabella inserita lì finirebbe dentro l'alt del tag
+// immagine (foto distrutta e tabella non riconosciuta dall'anteprima).
+function insertBlockAfterCurrentLine(md, selectText) {
+  const value = ta.value;
+  const anchor = ta.selectionEnd !== undefined ? ta.selectionEnd : value.length;
+  let lineEnd = value.indexOf("\n", anchor);
+  if (lineEnd === -1) lineEnd = value.length;
+  const before = value.slice(0, lineEnd);
+  const sep = before.length === 0 ? "" : (before.endsWith("\n") ? "\n" : "\n\n");
+  const block = md.replace(/^\n+/, "").replace(/\n+$/, "") + "\n";
+  const text = sep + block;
+  const idx = selectText ? text.indexOf(selectText) : -1;
+  const selStart = idx >= 0 ? lineEnd + idx : lineEnd + text.length;
+  const selEnd = idx >= 0 ? selStart + selectText.length : selStart;
+  replaceRange(ta, lineEnd, lineEnd, text, selStart, selEnd);
+}
+
 function applyFormatting(action) {
   if (isProjectSwitching || isBuilding || isLoadingChapter || ta.readOnly || !currentFile) return;
 
@@ -5404,12 +5425,8 @@ function applyFormatting(action) {
       break;
 
     case "break":
-      const beforeChar = start > 0 ? val[start - 1] : "\n";
-      const lead = (beforeChar === "\n") ? "" : "\n\n";
-      replacement = lead + "***\n\n";
-      newCursorStart = start + replacement.length;
-      newCursorEnd = newCursorStart;
-      break;
+      insertBlockAfterCurrentLine("***\n", null);
+      return;
 
     case "link":
       if (selectedText) {
@@ -5553,15 +5570,7 @@ function insertMarkdownTable() {
   md += "\n";
 
   hideTableModal();
-
-  const start = ta.selectionStart !== undefined ? ta.selectionStart : ta.value.length;
-  const end = ta.selectionEnd !== undefined ? ta.selectionEnd : start;
-  const targetWord = `${colPrefix} 1`;
-  const firstColIdx = md.indexOf(targetWord);
-  const selStart = firstColIdx !== -1 ? start + firstColIdx : start;
-  const selEnd = firstColIdx !== -1 ? selStart + targetWord.length : start;
-
-  replaceRange(ta, start, end, md, selStart, selEnd);
+  insertBlockAfterCurrentLine(md, `${colPrefix} 1`);
 }
 
 $("tbTable")?.addEventListener("click", openTableModal);
@@ -9532,12 +9541,27 @@ async function updatePublicationPreview() {
     }
 
     // 4. Successo: aggiorna artefatto e stato
+    const artWarnings = (res.warnings && res.warnings.length) ? res.warnings : [];
     if (target === "print") {
       pubState.printArtifact = res;
-      pubState.printStatus = (res.warnings && res.warnings.length) ? "stale" : "current";
+      pubState.printStatus = artWarnings.length ? "stale" : "current";
     } else {
       pubState.ebookArtifact = res;
-      pubState.ebookStatus = (res.warnings && res.warnings.length) ? "stale" : "current";
+      pubState.ebookStatus = artWarnings.length ? "stale" : "current";
+    }
+
+    // Le sorgenti possono cambiare mentre il render è in corso: l'artefatto è
+    // valido ma non più allineato. Il badge resta "Da aggiornare" e il motivo
+    // diventa leggibile (tooltip) invece di restare implicito.
+    const statusEl = $("pubStatusText");
+    if (statusEl) {
+      if (artWarnings.length) {
+        statusEl.title = artWarnings.join("\n");
+        statusEl.dataset.warnings = String(artWarnings.length);
+      } else {
+        statusEl.removeAttribute("title");
+        delete statusEl.dataset.warnings;
+      }
     }
 
     updatePubStatusUI();

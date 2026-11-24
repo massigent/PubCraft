@@ -17,6 +17,7 @@ GUIWEB := $(shell find src/pubcraftgui/web -type f)
 FONTFILES := $(shell find fonts -type f)
 THIRDPARTY := $(shell find third-party-licenses -type f)
 HTML2PDF := build/pubcraft-html2pdf
+CHECKCORE := build/check_core
 APP := build/PubCraft.app
 DMG := build/PubCraft-$(VERSION).dmg
 export COPYFILE_DISABLE=1
@@ -99,7 +100,14 @@ pkg-macos: dmg
 verify-macos-release:
 	python3 scripts/check_macos_universal.py --app-zip build/PubCraft-$(VERSION)-macos-universal.app.zip --portable build/PubCraft-$(VERSION)-macos.tar.gz --dmg $(DMG) --pkg build/PubCraft-$(VERSION).pkg --expected-source "$$(git rev-parse HEAD)"
 
-check: $(BIN) $(GUI)
+# Test interni del C (politica degli indici): include pubcraft.c con main
+# rinominato, nessun comando pubblico aggiuntivo.
+$(CHECKCORE): tests/check_core.c $(SRC)
+	@mkdir -p build
+	$(CC) $(CFLAGS) -o $@ $<
+
+check: $(BIN) $(GUI) $(CHECKCORE)
+	./$(CHECKCORE)
 	bash tests/test_cli.sh $(BIN)
 	go -C src/pubcraftgui test -race -count=1 -v .
 	python3 -m unittest discover -s tests -p test_release_guards.py

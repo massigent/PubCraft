@@ -69,9 +69,14 @@ type Book struct {
 	Pages       int               `json:"pages,omitempty"`
 	Bleed       bool              `json:"bleed,omitempty"`
 	TotalWords  int               `json:"total_words,omitempty"`
+	TOC         *TocConfig        `json:"toc,omitempty"`
 	Chapters    []Chapter         `json:"chapters"`
 	ExtraFields map[string]string `json:"extra_fields,omitempty"`
 	extraRaw    map[string]string `json:"-"`
+	// Warnings raccoglie gli avvisi non bloccanti emersi leggendo book.yaml
+	// (tipi di sezione sconosciuti, opzioni toc ignorate). Non fa parte del
+	// contratto JSON: è memoria di lavoro della richiesta.
+	Warnings []string `json:"-"`
 }
 
 type State struct {
@@ -140,7 +145,13 @@ func setVault(p string) {
 	invalidateVaultFingerprint()
 
 	if cur != "" {
-		go recordRecentProject(cur)
+		// Persistenza sincrona (best-effort, gli errori sono ignorati):
+		// un goroutine in background scriverebbe in $HOME/.pubcraft in un
+		// momento arbitrario, anche dopo che il chiamante ha cambiato HOME o
+		// rimosso la cartella di configurazione (i test isolano HOME in una
+		// TempDir). Il costo e' una lettura di book.yaml e la scrittura di un
+		// piccolo JSON all'apertura del progetto, gia' in cache.
+		recordRecentProject(cur)
 	}
 }
 
@@ -441,7 +452,7 @@ func capitalizeFirst(s string) string {
 
 func isKnownField(k string) bool {
 	switch k {
-	case "title", "author", "language", "style", "opening", "font", "scenebreak", "trim", "pages", "bleed", "uuid", "cover", "chapters":
+	case "title", "author", "language", "style", "opening", "font", "scenebreak", "trim", "pages", "bleed", "uuid", "cover", "chapters", "toc":
 		return true
 	default:
 		return false
@@ -491,6 +502,9 @@ func parseBookYAML(path string) (*Book, error) {
 			}
 		}
 	}
+	// Tipi espliciti non riconosciuti: avvisa senza toccare i contenuti.
+	b.Warnings = append(b.Warnings, unknownBookTypeWarnings(b)...)
+	reportBookWarnings(path, b)
 	return b, nil
 }
 
@@ -644,6 +658,15 @@ func writeBookYAMLAtLocked(p string, b *Book) error {
 	}
 	if b.Cover != "" {
 		fmt.Fprintf(&s, "cover: %s\n", yamlScalar(b.Cover))
+	}
+	if b.TOC != nil && (b.TOC.Subheads != nil || b.TOC.PageNumbers != nil) {
+		s.WriteString("toc:\n")
+		if b.TOC.Subheads != nil {
+			fmt.Fprintf(&s, "  subheads: %t\n", *b.TOC.Subheads)
+		}
+		if b.TOC.PageNumbers != nil {
+			fmt.Fprintf(&s, "  pagenumbers: %t\n", *b.TOC.PageNumbers)
+		}
 	}
 	// Scrivi campi extra unificati e ordinati determinisicamente, senza duplicati.
 	// I valori già letti dal file vengono riemessi alla lettera (extraRaw);
@@ -3063,6 +3086,9 @@ func apiNewChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
+	// Frontmatter needs the same scalar escaping as book.yaml: punctuation
+	// or newlines in a user title must not become YAML comments/fields.
+	frontmatterTitle := yamlScalar(title)
 	chType := strings.TrimSpace(req.Type)
 	if chType == "" {
 		chType = "chapter"
@@ -3125,49 +3151,49 @@ ISBN: 978-0-000000-0-0
 Composto e impaginato con PubCraft.
 
 </div>
-`, id, title, summaryLine, bookTitle, author, year, author, year)
+`, id, frontmatterTitle, summaryLine, bookTitle, author, year, author, year)
 	case "dedication":
 		file = "00-dedica.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-dedica-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: dedication\n%s---\n\n*A chi crede nella forza delle parole.*\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: dedication\n%s---\n\n*A chi crede nella forza delle parole.*\n", id, frontmatterTitle, summaryLine)
 	case "epigraph":
 		file = "00-epigrafe.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-epigrafe-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epigraph\n%s---\n\n> Non c'è vento favorevole per il marinaio che non sa dove andare.\n> — Lucio Anneo Seneca\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epigraph\n%s---\n\n> Non c'è vento favorevole per il marinaio che non sa dove andare.\n> — Lucio Anneo Seneca\n", id, frontmatterTitle, summaryLine)
 	case "prologue":
 		file = "00-prologo.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-prologo-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: prologue\n%s---\n\nTutto ebbe inizio prima che il tempo stesso ne conservasse memoria...\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: prologue\n%s---\n\nTutto ebbe inizio prima che il tempo stesso ne conservasse memoria...\n", id, frontmatterTitle, summaryLine)
 	case "epilogue":
 		file = "90-epilogo.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("90-epilogo-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epilogue\n%s---\n\nQuando la polvere si posò, restava soltanto il silenzio.\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: epilogue\n%s---\n\nQuando la polvere si posò, restava soltanto il silenzio.\n", id, frontmatterTitle, summaryLine)
 	case "about-author":
 		file = "99-sull-autore.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("99-sull-autore-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: about-author\n%s---\n\n**Nome Autore** è scrittore e divulgatore.\n\nVive e lavora tra la scrittura e la ricerca.\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: about-author\n%s---\n\n**Nome Autore** è scrittore e divulgatore.\n\nVive e lavora tra la scrittura e la ricerca.\n", id, frontmatterTitle, summaryLine)
 	case "acknowledgments":
 		file = "98-ringraziamenti.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("98-ringraziamenti-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: acknowledgments\n%s---\n\nDesidero ringraziare di cuore tutti coloro che hanno reso possibile la nascita di questo libro.\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: acknowledgments\n%s---\n\nDesidero ringraziare di cuore tutti coloro che hanno reso possibile la nascita di questo libro.\n", id, frontmatterTitle, summaryLine)
 	case "preface":
 		file = "00-prefazione.md"
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("00-prefazione-%d.md", i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: preface\n%s---\n\nQuesto testo nasce dall'esigenza di esplorare...\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\ntype: preface\n%s---\n\nQuesto testo nasce dall'esigenza di esplorare...\n", id, frontmatterTitle, summaryLine)
 	default:
 		// Capitolo ordinario: prossimo numero 01, 02, …
 		max := 0
@@ -3181,7 +3207,7 @@ Composto e impaginato con PubCraft.
 		for i := 0; fileExists(filepath.Join(vDir, file)); i++ {
 			file = fmt.Sprintf("%02d-%s-%d.md", max+1, slug, i+2)
 		}
-		md = fmt.Sprintf("---\nid: %s\ntitle: %s\nstatus: bozza\n%s---\n\n", id, title, summaryLine)
+		md = fmt.Sprintf("---\nid: %s\ntitle: %s\nstatus: bozza\n%s---\n\n", id, frontmatterTitle, summaryLine)
 	}
 
 	if err := os.WriteFile(filepath.Join(vDir, file), []byte(md), 0o644); err != nil {

@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 
 const root = path.resolve(__dirname, '..');
@@ -50,6 +51,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     env: { ...process.env, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(server);
 
   let browser;
   let context;
@@ -299,14 +301,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.disconnect().catch(() => {});
-    if (server) {
-      await new Promise(resolve => {
-        server.on('exit', resolve);
-        server.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(server);
     fs.rmSync(tmp, { recursive: true, force: true });
   }
   process.exit(0);

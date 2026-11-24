@@ -2,6 +2,48 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
+## [1.0.0-alpha.6] — in preparation, not yet published
+
+### Changed — improved stability
+
+- **Section-type/TOC policy:** chapter `type:` values (strings, including the
+  `colophon` alias) now drive one consistent TOC inclusion table across the
+  printed index, EPUB nav.xhtml and toc.ncx; unknown types produce a warning
+  and are paginated as normal chapters, and `book.yaml` is never rewritten.
+  CLI and GUI share the same parser and validation (see
+  `src/pubcraftgui/booktypes.go`, `pagemap.go`, `toc_policy_test.go`).
+- **CLI/GUI/YAML parity:** the `toc:` boolean options (`subheads`,
+  `pagenumbers`) are loaded and validated identically in the CLI, the GUI and
+  the `book.yaml` schema, with the same defaults and tests
+  (`src/pubcraftgui/yaml_parity_test.go`, fixtures `tests/fixtures/yaml/07..09`).
+- **PDF index-page cache identity:** the page-number cache used by the printed
+  index is keyed on the rendering environment, so a changed renderer or page
+  setup cannot reuse stale page numbers from a previous build.
+- **Publication guard:** a failed candidate PDF build keeps the previously
+  published PDF untouched (`src/pubcraftgui/printguard.go`).
+- **Preview freshness:** the publication preview warns when source files have
+  changed since the last render.
+- **Test hygiene:** the browser suite now uses 19 consolidated runners with a
+  shared cleanup helper (`tests/cleanup.cjs`).
+- **AppImage tooling:** appimagetool is pinned to release 1.9.1 in the build
+  workflow.
+
+### Honest status
+
+The **local** alpha.6 build/test cycle has passed on this branch: `make check` with uncached
+Go tests (`-race -count=1`), `go vet`, C core checks (TOC-policy table), the CLI test suite,
+Python release-guard tests, PDF end-to-end render tests, the full 19-runner browser suite and
+`check_release_version.py`. A few tests are skipped for environmental reasons only (external
+Scrivener template fixture, optional local renderer/helper tests, and the macOS-only WebKit
+geometry E2E test, which is skipped on non-macOS hosts by design).
+
+Alpha.6 is still a candidate, **not a published release**: native Linux/Windows package tests
+and the native macOS package cycle are pending, and no alpha.6 tag, package or asset exists.
+Published alpha.5 Windows packages passed native Windows CI; only the local development
+Windows packages created during this session, before the version bump, were cross-build-checked.
+
+Details: [bilingual alpha.6 preparation notes](RELEASE_NOTES_1.0.0-alpha.6.md).
+
 ## [1.0.0-alpha.5]
 
 ### Fixed

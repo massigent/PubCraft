@@ -1,5 +1,6 @@
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 const { spawn } = require('child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
@@ -63,6 +64,7 @@ chapters:
     env: { ...process.env, HOME: tmp, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(server);
 
   let browser, page;
   try {
@@ -247,8 +249,8 @@ chapters:
 
   } finally {
     if (page) await page.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
-    server.kill('SIGTERM');
+    await releaseBrowser(browser);
+    await stopGui(server);
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
 })().catch(err => {

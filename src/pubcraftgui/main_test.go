@@ -362,6 +362,13 @@ func TestReviewRaceChapter(t *testing.T) {
 }
 
 func generateTestPDF(numPages int) []byte {
+	return generateTestPDFSized(numPages, 432, 648)
+}
+
+// generateTestPDFSized genera un PDF sintetico con il formato di pagina
+// indicato: i test che emulano un renderer reale devono dichiarare le stesse
+// dimensioni che il renderer produrrebbe per il trim richiesto.
+func generateTestPDFSized(numPages int, wPt, hPt float64) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("%PDF-1.4\n")
 	offsets := make(map[int]int)
@@ -383,7 +390,7 @@ func generateTestPDF(numPages int) []byte {
 
 	for i := 1; i <= numPages; i++ {
 		recordObj(i + 2)
-		buf.WriteString("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 432 648] >>\nendobj\n")
+		fmt.Fprintf(&buf, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.2f %.2f] >>\nendobj\n", wPt, hPt)
 	}
 
 	startXRef := buf.Len()

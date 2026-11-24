@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +95,9 @@ type cParsedBook struct {
 	Trim       string
 	Pages      int
 	Bleed      string
+	TocSubs    bool
+	TocPages   bool
+	TocSeen    bool
 	Chapters   []Chapter
 }
 
@@ -138,6 +142,21 @@ func parseCInfoOutput(out string) cParsedBook {
 					res.Pages, _ = strconv.Atoi(v)
 				case "bleed":
 					res.Bleed = v
+				case "toc":
+					// "subheads=true pagenumbers=false"
+					res.TocSeen = true
+					for _, f := range strings.Fields(v) {
+						kv := strings.SplitN(f, "=", 2)
+						if len(kv) != 2 {
+							continue
+						}
+						switch kv[0] {
+						case "subheads":
+							res.TocSubs = kv[1] == "true"
+						case "pagenumbers":
+							res.TocPages = kv[1] == "true"
+						}
+					}
 				}
 			}
 		} else {
@@ -242,6 +261,27 @@ func TestYAMLParityGoAndC(t *testing.T) {
 				t.Errorf("[%s] Discrepanza Pages: Go=%d, C=%d", fixtureName, goBook.Pages, cBook.Pages)
 			}
 
+			// Config indice (book.yaml `toc:`): il C deve applicare gli stessi
+			// default del Go (subheads=false, pagenumbers=true), anche quando il
+			// blocco toc: e' scritto dopo chapters:.
+			if !cBook.TocSeen {
+				t.Errorf("[%s] pubcraft info non riporta la riga toc:", fixtureName)
+			} else {
+				goSubs, goTocPages := false, true
+				if goBook.TOC != nil {
+					if goBook.TOC.Subheads != nil {
+						goSubs = *goBook.TOC.Subheads
+					}
+					if goBook.TOC.PageNumbers != nil {
+						goTocPages = *goBook.TOC.PageNumbers
+					}
+				}
+				if goSubs != cBook.TocSubs || goTocPages != cBook.TocPages {
+					t.Errorf("[%s] Discrepanza toc: Go={subheads:%t pagenumbers:%t} C={subheads:%t pagenumbers:%t}",
+						fixtureName, goSubs, goTocPages, cBook.TocSubs, cBook.TocPages)
+				}
+			}
+
 			// 4. Confronto capitoli
 			if len(goBook.Chapters) != len(cBook.Chapters) {
 				t.Fatalf("[%s] Numero capitoli diverso: Go=%d, C=%d", fixtureName, len(goBook.Chapters), len(cBook.Chapters))
@@ -307,5 +347,105 @@ func TestInstanceCacheShutdownCleanup(t *testing.T) {
 	}
 	if _, err := os.Stat(myPIDDir); err != nil {
 		t.Errorf("cleanOrphanedPreviewDirs NON deve rimuovere la cartella di un PID attivo: %v", err)
+	}
+}
+
+// TestTocBooleanParityGoAndC verifica che GUI e CLI accettino e interpretino
+// allo stesso modo i valori booleani di `toc:` in book.yaml: true/false,
+// yes/no, on/off, 1/0 (maiuscole indifferenti), valori vuoti/`~`/`null` come
+// "non impostato" (default) e valori non validi come errore in entrambe.
+func TestTocBooleanParityGoAndC(t *testing.T) {
+	cBin := "../../build/pubcraft"
+	if _, err := os.Stat(cBin); err != nil {
+		t.Skipf("binario C non trovato in %s: compila prima con make", cBin)
+	}
+	cases := []struct {
+		name      string
+		toc       string
+		wantSubs  string
+		wantPages string
+		wantErr   bool
+	}{
+		{"on-off", "toc:\n  subheads: on\n  pagenumbers: off\n", "true", "false", false},
+		{"yes-no", "toc:\n  subheads: yes\n  pagenumbers: no\n", "true", "false", false},
+		{"uppercase", "toc:\n  subheads: TRUE\n  pagenumbers: FALSE\n", "true", "false", false},
+		{"numeric", "toc:\n  subheads: 1\n  pagenumbers: 0\n", "true", "false", false},
+		{"quoted", "toc:\n  subheads: \"no\"\n  pagenumbers: \"yes\"\n", "false", "true", false},
+		{"null values", "toc:\n  subheads: ~\n  pagenumbers: null\n", "false", "true", false},
+		{"empty values", "toc:\n  subheads:\n  pagenumbers:\n", "false", "true", false},
+		{"unknown key ignored", "toc:\n  subheads: yes\n  depth: 3\n", "true", "true", false},
+		{"invalid subheads", "toc:\n  subheads: forse\n", "", "", true},
+		{"invalid pagenumbers", "toc:\n  pagenumbers: 2\n", "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := "title: Parity\nauthor: A\nlanguage: it\nchapters:\n- file: 01.md\n  id: c1\n  title: Uno\n" + tc.toc
+			if err := os.WriteFile(filepath.Join(dir, "book.yaml"), []byte(yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "01.md"), []byte("Testo.\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			// Lato Go (GUI)
+			goBook, goErr := decodeBookYAML([]byte(yaml))
+			goSubs, goPages := false, true
+			if goErr == nil && goBook.TOC != nil {
+				if goBook.TOC.Subheads != nil {
+					goSubs = *goBook.TOC.Subheads
+				}
+				if goBook.TOC.PageNumbers != nil {
+					goPages = *goBook.TOC.PageNumbers
+				}
+			}
+
+			// Lato C (CLI)
+			out, cErr := exec.Command(cBin, "info", dir).CombinedOutput()
+			lines := strings.Split(string(out), "\n")
+
+			if tc.wantErr {
+				if goErr == nil {
+					t.Fatalf("Go ha accettato un valore non valido (%s)", tc.toc)
+				}
+				if cErr == nil {
+					t.Fatalf("CLI ha accettato un valore non valido (%s):\n%s", tc.toc, out)
+				}
+				return
+			}
+			if goErr != nil {
+				t.Fatalf("Go ha rifiutato un valore valido: %v", goErr)
+			}
+			if cErr != nil {
+				t.Fatalf("CLI ha rifiutato un valore valido: %v\n%s", cErr, out)
+			}
+			cSubs, cPages := "", ""
+			for _, l := range lines {
+				if strings.HasPrefix(strings.TrimSpace(l), "toc:") {
+					for _, f := range strings.Fields(strings.TrimSpace(l))[1:] {
+						kv := strings.SplitN(f, "=", 2)
+						if len(kv) != 2 {
+							continue
+						}
+						if kv[0] == "subheads" {
+							cSubs = kv[1]
+						}
+						if kv[0] == "pagenumbers" {
+							cPages = kv[1]
+						}
+					}
+				}
+			}
+			gotSubs := fmt.Sprintf("%t", goSubs)
+			gotPages := fmt.Sprintf("%t", goPages)
+			if gotSubs != cSubs || gotPages != cPages {
+				t.Fatalf("divergenza Go/C: Go={subheads:%s pagenumbers:%s} C={subheads:%s pagenumbers:%s}",
+					gotSubs, gotPages, cSubs, cPages)
+			}
+			if gotSubs != tc.wantSubs || gotPages != tc.wantPages {
+				t.Fatalf("atteso {subheads:%s pagenumbers:%s}, ottenuto Go={subheads:%s pagenumbers:%s}",
+					tc.wantSubs, tc.wantPages, gotSubs, gotPages)
+			}
+		})
 	}
 }

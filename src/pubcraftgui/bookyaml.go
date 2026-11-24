@@ -11,9 +11,55 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// yamlBool interpreta i booleani di `toc:` con la stessa semantica della CLI
+// (yaml_bool_parse in pubcraft.c): true/false, yes/no, on/off, 1/0 senza
+// distinzione di maiuscole. Un valore assente, vuoto, `~` o `null` significa
+// "non impostato" (set=false): resta il default. Qualsiasi altro valore è un
+// errore esplicito in entrambe le implementazioni.
+func yamlBool(v any, field string) (val bool, set bool, err error) {
+	switch t := v.(type) {
+	case nil:
+		return false, false, nil
+	case bool:
+		return t, true, nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "true", "yes", "on", "1":
+			return true, true, nil
+		case "false", "no", "off", "0":
+			return false, true, nil
+		case "", "~", "null":
+			return false, false, nil
+		}
+	case int:
+		// La CLI legge il testo grezzo e accetta solo 1/0: un intero diverso
+		// (es. 2) è un errore anche qui, per non divergere.
+		if t == 0 || t == 1 {
+			return t == 1, true, nil
+		}
+	case float64:
+		// Testo grezzo come 1.0 o 2.5 non è un booleano accettato dalla CLI.
+		return false, false, fmt.Errorf("%s non valido (atteso true/false, yes/no, on/off, 1/0)", field)
+	}
+	return false, false, fmt.Errorf("%s non valido (atteso true/false, yes/no, on/off, 1/0)", field)
+}
+
 // Validate YAML syntax and the supported book schema before changing projects.
 // Decoding via a map also detects duplicate keys; unknown scalar metadata is
 // retained rather than silently discarded on the next write.
+// TocConfig sono le opzioni dell'indice automatico in book.yaml:
+//
+//	toc:
+//	  subheads: true      # sottocapi (h3) annidati nell'indice (default false)
+//	  pagenumbers: false  # numeri di pagina nell'indice di stampa (default true)
+//
+// I puntatori distinguono "non impostato" (conservato com'è nel file) dai
+// valori espliciti: i default sono applicati dalla CLI.
+type TocConfig struct {
+	Subheads    *bool `json:"subheads,omitempty"`
+	PageNumbers *bool `json:"pagenumbers,omitempty"`
+}
+
 func decodeBookYAML(data []byte) (*Book, error) {
 	// Un book.yaml legacy può contenere chiavi uuid duplicate (bug delle
 	// versioni precedenti). Le normalizziamo prima della decodifica, senza
@@ -61,6 +107,47 @@ func decodeBookYAML(data []byte) (*Book, error) {
 				}
 				b.Chapters = append(b.Chapters, Chapter{File: fileName, Title: chapter["title"], ID: chapter["id"], Type: chapter["type"]})
 			}
+			continue
+		}
+		if key == "toc" {
+			if node.Tag == "!!null" {
+				continue
+			}
+			if node.Kind != yaml.MappingNode {
+				return nil, fmt.Errorf("toc deve essere una mappa di opzioni (subheads, pagenumbers)")
+			}
+			var opts map[string]any
+			if err := node.Decode(&opts); err != nil {
+				return nil, fmt.Errorf("toc non valido: %w", err)
+			}
+			tc := &TocConfig{}
+			if v, ok := opts["subheads"]; ok {
+				bv, set, err := yamlBool(v, "toc.subheads")
+				if err != nil {
+					return nil, err
+				}
+				if set {
+					tc.Subheads = &bv
+				}
+			}
+			if v, ok := opts["pagenumbers"]; ok {
+				bv, set, err := yamlBool(v, "toc.pagenumbers")
+				if err != nil {
+					return nil, err
+				}
+				if set {
+					tc.PageNumbers = &bv
+				}
+			}
+			for k := range opts {
+				if k != "subheads" && k != "pagenumbers" {
+					// Stessa politica della CLI: avvisa e ignora, senza
+					// rendere il progetto inutilizzabile.
+					b.Warnings = append(b.Warnings,
+						fmt.Sprintf("opzione toc sconosciuta '%s' ignorata (supportate: subheads, pagenumbers)", k))
+				}
+			}
+			b.TOC = tc
 			continue
 		}
 		if node.Kind != yaml.ScalarNode {

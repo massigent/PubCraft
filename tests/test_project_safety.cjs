@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn, execFileSync } = require('node:child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -33,6 +34,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     env: { ...process.env, HOME: tmp, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(server);
   let browser, context;
   try {
     let ready = false;
@@ -152,14 +154,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     console.log('PASS: real new-book buttons, quoted titles/reload, YAML validation, locked structural actions and stale-vault rejection.');
   } finally {
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.disconnect().catch(() => {});
-    if (server) {
-      await new Promise(resolve => {
-        server.on('exit', resolve);
-        server.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(server);
     try {
       fs.rmSync(tmp, { recursive: true, force: true });
     } catch (_) {}

@@ -350,7 +350,17 @@ func apiPublicationPreview(w http.ResponseWriter, r *http.Request) {
 			initialPages = 200
 		}
 
-		_, pdfPath, _, finalPages, buildErr := renderPrintCore(vDir, b, trim, initialPages, req.Settings.Bleed, artDir)
+		// Un solo motore selezionato anche in anteprima: l'identità e il
+		// rendering usano lo stesso percorso. La mappa persistita si usa solo
+		// se è valida per QUESTO ambiente; nessuna scrittura e nessuna sonda.
+		engine := selectPDFBrowser()
+		if engine == "" {
+			_ = os.RemoveAll(artDir)
+			jsonErr(w, http.StatusInternalServerError, "Nessun motore PDF disponibile per l'anteprima")
+			return
+		}
+		mapToUse := previewPageMap(vDir, b, trim, req.Settings.Bleed, engine, artDir)
+		_, pdfPath, _, finalPages, _, buildErr := renderPrintCore(vDir, b, trim, initialPages, req.Settings.Bleed, artDir, engine, mapToUse, false)
 		if buildErr != nil {
 			_ = os.RemoveAll(artDir)
 			jsonErr(w, http.StatusInternalServerError, "Generazione PDF anteprima fallita: "+buildErr.Error())
@@ -412,6 +422,13 @@ func apiPublicationPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	registerPreviewArtifact(art)
+	// Un artefatto con avvisi resta valido, ma lo stato "da aggiornare" va
+	// tracciato: altrimenti il badge cambia senza spiegazione e senza traccia
+	// nel report diagnostico.
+	for _, w := range art.Warnings {
+		RecordDiagEvent("warning", "build", "PREVIEW_SOURCES_CHANGED", "apiPublicationPreview",
+			w, "target: "+art.Target, req.RequestID, "")
+	}
 
 	resp := map[string]any{
 		"preview_id":           art.ID,

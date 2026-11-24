@@ -1,5 +1,6 @@
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 const { spawn } = require('child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
@@ -91,6 +92,7 @@ chapters:
     },
     stdio: 'ignore',
   });
+  trackGui(server);
 
   let browser, context, page;
   try {
@@ -280,14 +282,8 @@ chapters:
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.disconnect().catch(() => {});
-    if (server) {
-      await new Promise(resolve => {
-        server.on('exit', resolve);
-        server.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(server);
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
   process.exit(0);

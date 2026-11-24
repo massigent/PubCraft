@@ -12,23 +12,38 @@ go -C src/pubcraftgui test -run '^$' -fuzz '^FuzzParsePDFData$' -fuzztime=3s -pa
 
 ## Browser tests
 
-The canonical browser test suite consists of 16 test runners:
-1. `test_preview_geometry.cjs`: Preview panel geometry and layout stability.
-2. `test_audit4_fixes.cjs`: Concurrency, rapid chapter switching, and cross-vault build isolation regressions.
-3. `test_languages_preview.cjs`: UI localization (10 languages), RTL layout, Watch sync, and print settings.
-4. `test_transitions_and_export.cjs`: Project switching safety (P0 identical files), export pre-flush (P1), and invalid folder rejection (P1 Politica A).
-5. `test_project_safety.cjs`: Real new-book clicks from all three entry points, quoted-title reloads, YAML document markers/schema checks, locked structural actions, and stale-vault rejection.
-6. `test_i18n_and_preview.cjs`: Manuscript print preview rendering and auto language detection.
-7. `test_publication_preview.cjs`: Manual publication preview (Option A), zero builds on open/type/interaction, pre-build flush, isolated preview artifacts, PDF.js byte rendering, facing spreads, and guide overlays.
-8. `test_editor_toolbar.cjs`: Minimalist formatting toolbar (bold, italic, H2, H3, blockquote, lists, scene break, link), native shortcuts (Cmd+B, Cmd+I, Cmd+K), image upload into `images/`, clipboard paste, and auto-save.
-9. `test_welcome_and_recents.cjs`: Welcome launcher screen, 10-language localized UI, tutorial & keyboard shortcuts modal, 1-click recent books opening, book close return, workspace folder management, and file browser quick access.
-10. `test_notebook_and_title.cjs`: Book notebook drawer, in-place title rename, autosave queue with slow network resistance, conflict detection, and note-to-chapter conversion.
-11. `test_focus_mode.cjs`: Distraction-free full-screen writing mode (F11/Esc), typewriter centered scrolling, and dimming modes.
-12. `test_dark_mode.cjs`: Dark mode theme switching, persistence, contrast checks, and modal styling.
-13. `test_topbar_responsiveness.cjs`: Topbar and docbar responsiveness across breakpoints, unified dropdowns, and compact layouts.
-14. `test_line_breaks.cjs`: Single line breaks preserved as visual paragraphs in book preview rendering.
-15. `test_residual_selection.cjs`: Selecting/importing Markdown files in a folder that is already a book preserves chapters, IDs, titles, order and custom metadata; invalid `book.yaml` is rejected byte-for-byte.
-16. `test_vault_sync.cjs`: Folder ↔ `book.yaml` synchronization (non-destructive policy): `.md` files added or renamed outside PubCraft are picked up automatically (renames matched by front-matter `id`), missing files are flagged without dropping the entry, and orphan entries are removed only on explicit request.
+The canonical browser test suite consists of 19 runners (the first two check the
+harness itself):
+1. `test_cleanup_orphans.cjs`: Test hygiene — only processes created by the test are
+   terminated (by pid, never `pkill`/`killall`), SIGTERM is awaited and escalated to
+   SIGKILL on the same pid (against a single Node child that ignores SIGTERM and
+   signals readiness on stdout), the shared CDP browser is only disconnected (never
+   closed), an intentional failure leaves no orphan server, and the exit/signal guard
+   closes tracked children even when a script dies before its `finally`.
+2. `test_cleanup_edge.cjs`: `cleanup.cjs` edge cases — stopGui on an already exited
+   child is a fast no-op, double/concurrent stopGui is idempotent, short-lived
+   children do not leak from the tracking registry, SIGINT to the test process still
+   closes tracked children, and a normally exited child is removed from the registry
+   with zero `process.kill` calls (verified with a temporary spy restored in `finally`).
+3. `test_preview_geometry.cjs`: Preview publication-guides geometry — **static, no
+   browser/CDP**: the relevant functions of `app.js` are evaluated in a `vm` sandbox
+   and checked against expected SVG geometry.
+4. `test_audit4_fixes.cjs`: Concurrency, rapid chapter switching, and cross-vault build isolation regressions.
+5. `test_languages_preview.cjs`: UI localization (10 languages), RTL layout, Watch sync, and print settings.
+6. `test_transitions_and_export.cjs`: Project switching safety (P0 identical files), export pre-flush (P1), and invalid folder rejection (P1 Politica A).
+7. `test_project_safety.cjs`: Real new-book clicks from all three entry points, quoted-title reloads, YAML document markers/schema checks, locked structural actions, and stale-vault rejection.
+8. `test_i18n_and_preview.cjs`: Manuscript print preview rendering and auto language detection.
+9. `test_publication_preview.cjs`: Manual publication preview (Option A), zero builds on open/type/interaction, pre-build flush, isolated preview artifacts, PDF.js byte rendering, facing spreads, and guide overlays.
+10. `test_editor_toolbar.cjs`: Minimalist formatting toolbar (bold, italic, H2, H3, blockquote, lists, scene break, link), native shortcuts (Cmd+B, Cmd+I, Cmd+K), image upload into `images/`, clipboard paste, and auto-save.
+11. `test_welcome_and_recents.cjs`: Welcome launcher screen, 10-language localized UI, tutorial & keyboard shortcuts modal, 1-click recent books opening, book close return, workspace folder management, and file browser quick access.
+12. `test_notebook_and_title.cjs`: Book notebook drawer, in-place title rename, autosave queue with slow network resistance, conflict detection, and note-to-chapter conversion.
+13. `test_focus_mode.cjs`: Distraction-free full-screen writing mode (F11/Esc), typewriter centered scrolling, and dimming modes.
+14. `test_dark_mode.cjs`: Dark mode theme switching, persistence, contrast checks, and modal styling.
+15. `test_topbar_responsiveness.cjs`: Topbar and docbar responsiveness across breakpoints, unified dropdowns, and compact layouts.
+16. `test_line_breaks.cjs`: Single line breaks preserved as visual paragraphs in book preview rendering.
+17. `test_residual_selection.cjs`: Selecting/importing Markdown files in a folder that is already a book preserves chapters, IDs, titles, order and custom metadata; invalid `book.yaml` is rejected byte-for-byte.
+18. `test_chapter_reorder.cjs`: Chapter move arrows and Corkboard drag-and-drop reordering persist the same chapter order in `book.yaml`.
+19. `test_vault_sync.cjs`: Folder ↔ `book.yaml` synchronization (non-destructive policy): `.md` files added or renamed outside PubCraft are picked up automatically (renames matched by front-matter `id`), missing files are flagged without dropping the entry, and orphan entries are removed only on explicit request.
 
 Execute via either Makefile or npm:
 
@@ -127,3 +142,26 @@ by the supported renderers, including PNG predictors and TIFF predictor at 8 bit
 It checks page-tree counts/cycles, bounds and decoding limits. Unsupported filters
 fail explicitly. It is **not** a complete ISO 32000 implementation or a certification
 of KDP compliance. Keep independent PDF/rendering checks in release validation.
+
+### TOC policy: what is (and is not) verified
+
+`TOC_POLICY` in `src/pubcraft.c` is the single source for which section types enter
+the table of contents, per format. Coverage is deliberately declared:
+
+- **print, EPUB nav and `toc.ncx`** — verified end-to-end by `TestTocPolicyMatrix`,
+  which compares the declared matrix with the TOCs actually generated from
+  `tests/fixtures/toc_policy` (all supported types, the `colophon` alias, subheads
+  and an unknown type), and asserts that nav and NCX contain the same entries.
+- **HTML** — verified **internally only** (`tests/check_core.c`, `check_toc_policy`):
+  `export-html` accepts archives only, and chapters imported from archives do not
+  carry a section type yet, so an archive fixture would not prove the typified
+  behaviour. Preserving section types during import is a separate intervention.
+- **vocabulary parity** — the CLI prints the supported types (generated from the
+  same table) and `TestSupportedTypesParity` compares that list with the GUI copy in
+  `src/pubcraftgui/booktypes.go`, so the two vocabularies cannot drift silently.
+- **print geometry** — `src/pubcraftgui/printguard.go` checks every page against the
+  requested format (trim plus bleed, ±1 pt). This is a geometric check only: a
+  single-page snapshot that happens to have the correct dimensions is not detectable
+  here, and is not claimed to be.
+- **EPUB validity** — the structural checks in the Go tests are not EPUBCheck and do
+  not certify distributor compliance.

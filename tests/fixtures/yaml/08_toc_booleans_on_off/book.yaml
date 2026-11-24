@@ -1,0 +1,11 @@
+title: "Toc On Off"
+author: "Jane Doe"
+language: "en"
+chapters:
+  - file: "01.md"
+    id: "ch-1"
+    title: "First Chapter"
+    type: "chapter"
+toc:
+  subheads: on
+  pagenumbers: off

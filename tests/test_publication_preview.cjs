@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -43,6 +44,7 @@ chapters:
     env: { ...process.env, HOME: tmp, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(server);
 
   let browser, context, page;
   try {
@@ -73,7 +75,8 @@ chapters:
 
     page.on('console', msg => console.log('PAGE LOG:', msg.text()));
     page.on('pageerror', err => console.log('PAGE ERROR:', err.message));
-    page.on('requestfailed', req => console.log('REQ FAILED:', req.url(), req.failure().errorText));
+    const failedRequests = [];
+    page.on('requestfailed', req => { failedRequests.push(req); console.log('REQ FAILED:', req.url(), req.failure().errorText); });
 
     await page.goto(url);
     await page.waitForFunction(() => currentFile === '01.md' && !isProjectSwitching);
@@ -120,7 +123,7 @@ chapters:
     await page.type('#ta', '\nTesto aggiunto per verifica obsolescenza.');
     await wait(100);
     const statusTextAfterTyping = await page.$eval('#pubStatusText', el => el.textContent.trim());
-    assert(statusTextAfterTyping.includes('Nessuna anteprima') || statusTextAfterTyping.includes('Da aggiornare'), 'Badge deve riflettere stato');
+    assert(statusTextAfterTyping.includes('Nessuna anteprima') || statusTextAfterTyping.includes('Da aggiornare') || statusTextAfterTyping.includes('No preview') || statusTextAfterTyping.includes('Needs update'), 'Badge deve riflettere stato');
     assert.equal(previewCalls, 0, 'Digitazione non deve avviare alcuna build');
 
     // [Test 3] Cambio trim o controlli: ZERO build
@@ -134,25 +137,70 @@ chapters:
     const printConfigBefore = fs.existsSync(path.join(vault, '.pubcraft-print.json'));
     assert.equal(printConfigBefore, false, '.pubcraft-print.json non deve esistere prima');
 
-    const resPromise = page.waitForResponse(r => r.url().includes('/api/publication-preview') && r.request().method() === 'POST');
+    // Due fasi distinte, con timeout indipendenti:
+    // (a) la generazione lato server (render reale: gutter + PDF),
+    // (b) l'aggiornamento del DOM dopo la risposta (stato + visualizzatore).
+    // Un timeout nella fase (a) e uno nella fase (b) hanno cause diverse: qui
+    // vengono misurati e diagnosticati separatamente.
+    const GEN_TIMEOUT_MS = 120000;
+    const DOM_TIMEOUT_MS = 120000;
+    const phaseT0 = Date.now();
+    const resPromise = page.waitForResponse(r => r.url().includes('/api/publication-preview') && r.request().method() === 'POST', { timeout: GEN_TIMEOUT_MS });
     await page.$eval('#btnPubUpdate', el => el.click());
-    const resp = await resPromise;
+    let resp;
+    try {
+      resp = await resPromise;
+    } catch (e) {
+      throw new Error(`fase (a): la generazione dell'anteprima non ha risposto entro ${GEN_TIMEOUT_MS} ms (${e.message})`);
+    }
+    const genMs = Date.now() - phaseT0;
     assert.equal(resp.status(), 200, await resp.text());
     const data = await resp.json();
+    console.log(`  fase (a) generazione: ${genMs} ms`);
+    const responseWarnings = data.warnings || [];
     assert(data.preview_id, 'preview_id presente');
     assert(data.artifact_url, 'artifact_url presente');
     assert(data.download_url, 'download_url presente');
     assert(data.page_count > 0, 'page_count positivo');
     assert.deepEqual(data.settings, { trim: '5x8', bleed: false }, 'Artifact must return actual print settings, not just a hash');
 
-    // Attendi rendering PDF e aggiornamento stato
-    await page.waitForSelector('.pub-page-card');
-    await page.waitForFunction(() => {
-      const el = document.getElementById('pubStatusText');
-      return el && (el.textContent.includes('Aggiornata') || el.textContent.includes('Updated'));
-    }, { polling: 100 });
+    // Fase (b): rendering PDF nel DOM e stato finale. Gli stati terminali
+    // legittimi sono due: "Aggiornata" e, se il server ha segnalato che le
+    // sorgenti sono cambiate durante il render, "Da aggiornare" (l'artefatto
+    // esiste ed è valido, ma non è più allineato al testo).
+    const domT0 = Date.now();
+    try {
+      await page.waitForSelector('.pub-page-card', { timeout: DOM_TIMEOUT_MS });
+      await page.waitForFunction((hasWarnings) => {
+        const el = document.getElementById('pubStatusText');
+        if (!el) return false;
+        const txt = el.textContent || '';
+        const updated = /aggiornata|updated/i.test(txt);
+        const stale = /da aggiornare|needs update/i.test(txt);
+        return hasWarnings ? (updated || stale) : updated;
+      }, { polling: 100, timeout: DOM_TIMEOUT_MS }, responseWarnings.length > 0);
+    } catch (e) {
+      const status = await page.$eval('#pubStatusText', el => el.textContent.trim()).catch(() => '(assente)');
+      const detail = await page.$eval('#pubStatusText', el => el.title || '').catch(() => '');
+      const netFails = failedRequests.map(r => `${r.url()} -> ${r.failure().errorText}`);
+      throw new Error(
+        `fase (b): il DOM non ha raggiunto uno stato terminale entro ${DOM_TIMEOUT_MS} ms ` +
+        `(stato='${status}', avvisi=${JSON.stringify(responseWarnings)}, ` +
+        `tooltip='${detail}', richieste fallite=${JSON.stringify(netFails)}, ` +
+        `errori pagina=${JSON.stringify(errors.slice(0, 3))}): ${e.message}`);
+    }
+    const domMs = Date.now() - domT0;
+    console.log(`  fase (b) aggiornamento DOM: ${domMs} ms`);
     const statusAfterUpdate = await page.$eval('#pubStatusText', el => el.textContent.trim());
-    assert(statusAfterUpdate.includes('Aggiornata') || statusAfterUpdate.includes('Updated'), 'Stato deve essere Aggiornata');
+    const expectsStale = responseWarnings.length > 0;
+    const okCurrent = /aggiornata|updated/i.test(statusAfterUpdate);
+    const okStale = /da aggiornare|needs update/i.test(statusAfterUpdate);
+    assert(expectsStale ? okStale : okCurrent,
+      `Stato inatteso: '${statusAfterUpdate}' (avvisi: ${JSON.stringify(responseWarnings)})`);
+    if (expectsStale) {
+      const tip = await page.$eval('#pubStatusText', el => el.title || '');
+      assert(tip.length > 0, 'Con avvisi il motivo deve essere leggibile (tooltip)');
+    }
 
     // Verifica isolamento: .pubcraft-print.json NON deve essere stato creato nel vault dalla preview
     const printConfigAfter = fs.existsSync(path.join(vault, '.pubcraft-print.json'));
@@ -191,7 +239,7 @@ chapters:
 
     // [Test 8] Clic "Aggiorna anteprima" in Ebook: compilazione EPUB reale
     console.log('[Test 8] Aggiorna anteprima Ebook...');
-    const epubResPromise = page.waitForResponse(r => r.url().includes('/api/publication-preview') && r.request().method() === 'POST');
+    const epubResPromise = page.waitForResponse(r => r.url().includes('/api/publication-preview') && r.request().method() === 'POST', { timeout: 120000 });
     await page.$eval('#btnPubUpdate', el => el.click());
     const epubResp = await epubResPromise;
     assert.equal(epubResp.status(), 200, await epubResp.text());
@@ -251,6 +299,65 @@ chapters:
     assert.equal(pkMagic[0], 0x50, 'Magic P');
     assert.equal(pkMagic[1], 0x4b, 'Magic K');
 
+    // [Test 10b] Sorgenti modificate durante la generazione: l'artefatto resta
+    // valido, il server lo segnala e il badge passa a "Da aggiornare" con il
+    // motivo leggibile. È il caso che in una run condivisa faceva scadere
+    // l'attesa del DOM dopo una risposta HTTP 200.
+    //
+    // La mutazione non può basarsi su un ritardo fisso: il server calcola la
+    // revisione delle sorgenti prima del render e la ricalcola subito dopo,
+    // quindi la finestra utile è esattamente la durata del render (misurata
+    // 350-700 ms: un `wait(400)` era una monetina). Il segnale deterministico
+    // è la cartella del nuovo artefatto, creata dopo la revisione iniziale e
+    // prima del render: appena compare, il render è in corso.
+    console.log('[Test 10b] Sorgenti modificate durante la generazione...');
+    const previewsRoot = path.join(os.tmpdir(), 'pubcraft-previews');
+    const instancePrefix = `instance-${server.pid}-`;
+    const snapshotArtifacts = () => {
+      const ids = new Set();
+      let instances = [];
+      try { instances = fs.readdirSync(previewsRoot).filter(n => n.startsWith(instancePrefix)); } catch {}
+      for (const inst of instances) {
+        const instPath = path.join(previewsRoot, inst);
+        let vaultDirs = [];
+        try { vaultDirs = fs.readdirSync(instPath, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch {}
+        for (const vh of vaultDirs) {
+          let arts = [];
+          try { arts = fs.readdirSync(path.join(instPath, vh)); } catch {}
+          for (const id of arts) ids.add(`${inst}/${vh}/${id}`);
+        }
+      }
+      return ids;
+    };
+    const artifactsBefore = snapshotArtifacts();
+    const warnPromise = page.waitForResponse(r => r.url().includes('/api/publication-preview') && r.request().method() === 'POST', { timeout: GEN_TIMEOUT_MS });
+    await page.$eval('#btnPubUpdate', el => el.click());
+    const mutationDeadline = Date.now() + GEN_TIMEOUT_MS;
+    let appendedDuringRender = false;
+    while (!appendedDuringRender && Date.now() < mutationDeadline) {
+      const fresh = [...snapshotArtifacts()].filter(id => !artifactsBefore.has(id));
+      if (fresh.length > 0) {
+        fs.appendFileSync(path.join(vault, '01.md'), '\nRiga aggiunta durante la generazione.\n');
+        appendedDuringRender = true;
+        break;
+      }
+      await wait(5);
+    }
+    assert(appendedDuringRender,
+      'La cartella dell\'artefatto non è comparsa: impossibile mutare le sorgenti durante il render (nessun artefatto creato?)');
+    const warnResp = await warnPromise;
+    assert.equal(warnResp.status(), 200, await warnResp.text());
+    const warnData = await warnResp.json();
+    assert(Array.isArray(warnData.warnings) && warnData.warnings.length > 0,
+      'Il server deve segnalare che le sorgenti sono cambiate durante il render');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('pubStatusText');
+      return el && /da aggiornare|needs update/i.test(el.textContent || '');
+    }, { polling: 100, timeout: DOM_TIMEOUT_MS });
+    const warnTip = await page.$eval('#pubStatusText', el => el.title || '');
+    assert(warnTip.length > 0, 'Il motivo di "Da aggiornare" deve essere leggibile');
+    assert(/sorgenti|sources/i.test(warnTip), `Tooltip inatteso: ${warnTip}`);
+
     // [Test 11] Chiusura con tasto Escape e ripristino focus
     console.log('[Test 11] Chiusura con Escape e ripristino focus...');
     await page.keyboard.press('Escape');
@@ -261,14 +368,8 @@ chapters:
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.disconnect().catch(() => {});
-    if (server) {
-      await new Promise(resolve => {
-        server.on('exit', resolve);
-        server.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(server);
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
   process.exit(0);

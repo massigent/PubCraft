@@ -1,0 +1,3 @@
+Grazie.
+
+## Sezione ringraziamenti

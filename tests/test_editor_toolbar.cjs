@@ -1,5 +1,6 @@
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 const { spawn } = require('child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
@@ -38,6 +39,7 @@ chapters:
     env: { ...process.env, HOME: tmp, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(server);
 
   let browser, context, page;
   try {
@@ -236,8 +238,24 @@ chapters:
     await clickBtn('#btnTableInsert');
     await page.waitForSelector('#tableModal.hidden');
     val = await page.$eval('#ta', el => el.value);
-    assert(val.includes('| Colonna 1 | Colonna 2 | Colonna 3 |'), 'Tabella markdown deve essere inserita nel textarea');
-    assert(val.includes('| Cella 2.1 | Cella 2.2 | Cella 2.3 |'), 'Righe di dati devono essere presenti');
+    // I prefissi di intestazione/cella dipendono dalla lingua attiva dell'app
+    // (auto-rilevata: en → "Column 1"/"Cell 2.1", it → "Colonna 1"/"Cella 2.1").
+    const colPrefix = await page.evaluate(() => (typeof t === 'function' && (t('table_col_prefix') || 'Colonna')));
+    const cellPrefix = await page.evaluate(() => (typeof t === 'function' && (t('table_cell_prefix') || 'Cella')));
+    assert(val.includes(`| ${colPrefix} 1 | ${colPrefix} 2 | ${colPrefix} 3 |`), 'Tabella markdown deve essere inserita nel textarea');
+    assert(val.includes(`| ${cellPrefix} 2.1 | ${cellPrefix} 2.2 | ${cellPrefix} 2.3 |`), 'Righe di dati devono essere presenti');
+    // Regressione: subito dopo un incolla-immagine il segnaposto della didascalia
+    // resta selezionato. La tabella è un blocco e va inserita dopo la riga
+    // corrente, senza sostituire la selezione: prima finiva dentro l'alt del tag
+    // immagine (`![\n| Colonna 1 ...`), distruggendo la foto e rendendo la
+    // tabella dipendente dal parser.
+    assert(val.includes('![Didascalia](images/incolla-test.png)'),
+      'La tabella non deve spezzare il tag immagine appena incollato');
+    const tableHeaderRe = new RegExp(`\\|\\s*${colPrefix}\\s+1`);
+    assert(!new RegExp(`!\\[[^\\]]*\\|\\s*${colPrefix}\\s+1`).test(val),
+      'La tabella non deve essere inserita dentro l\'alt del tag immagine');
+    assert(val.indexOf('![Didascalia](images/incolla-test.png)') < val.search(tableHeaderRe),
+      'La tabella deve seguire il tag immagine, non precederlo');
 
     // Verifica rendering anteprima live
     await page.waitForFunction(() => {
@@ -245,25 +263,24 @@ chapters:
       const doc = frame && frame.contentDocument;
       return doc && doc.querySelector('table.book-table, table') && doc.querySelectorAll('th').length >= 3;
     }, { polling: 100, timeout: 5000 });
+    const previewHasImage = await page.evaluate(() => {
+      const doc = document.getElementById('prevFrame')?.contentDocument;
+      return !!doc && !!doc.querySelector('img[src*="incolla-test.png"]');
+    });
+    assert(previewHasImage, 'L\'immagine incollata deve restare visibile nell\'anteprima accanto alla tabella');
 
     await page.waitForFunction(() => dirty === false && !isLoadingChapter, { polling: 100, timeout: 10000 });
     await wait(200);
     fileOnDisk = fs.readFileSync(path.join(vault, '01.md'), 'utf-8');
-    assert(fileOnDisk.includes('| Colonna 1 | Colonna 2 | Colonna 3 |'), 'La tabella su disco deve essere salvata');
+    assert(fileOnDisk.includes(`| ${colPrefix} 1 | ${colPrefix} 2 | ${colPrefix} 3 |`), 'La tabella su disco deve essere salvata');
 
     console.log('✔ TUTTI I TEST DELLA TOOLBAR DI SCRITTURA SUPERATI CON SUCCESSO!');
 
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.disconnect().catch(() => {});
-    if (server) {
-      await new Promise(resolve => {
-        server.on('exit', resolve);
-        server.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(server);
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
   process.exit(0);

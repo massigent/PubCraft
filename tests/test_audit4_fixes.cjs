@@ -4,6 +4,7 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
@@ -36,6 +37,7 @@ const { spawn } = require('child_process');
     env: { ...process.env, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(guiProc);
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const url = `http://127.0.0.1:${port}`;
@@ -50,7 +52,7 @@ const { spawn } = require('child_process');
     await wait(100);
   }
   if (!serverOk) {
-    guiProc.kill();
+    await stopGui(guiProc);
     throw new Error('Server pubcraftgui non avviato su porta ' + port);
   }
 
@@ -349,14 +351,8 @@ const { spawn } = require('child_process');
     }
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
-    await browser.disconnect().catch(() => {});
-    if (guiProc) {
-      await new Promise(resolve => {
-        guiProc.on('exit', resolve);
-        guiProc.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(guiProc);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 })().catch((e) => {

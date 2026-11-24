@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer-core');
 
 const root = path.resolve(__dirname, '..');
@@ -65,6 +66,7 @@ chapters:
       PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(server);
 
   let browser, context, page;
   try {
@@ -135,9 +137,8 @@ chapters:
     console.log('\n=== TEST SELEZIONE FILE SUPERATI ===');
   } finally {
     if (context) await context.close().catch(() => {});
-    browser && browser.disconnect();
-    server.kill();
-    await wait(200);
+    await releaseBrowser(browser);
+    await stopGui(server);
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 })().catch(err => { console.error(err); process.exit(1); });

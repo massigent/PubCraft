@@ -139,8 +139,12 @@ func TestPrintSettingsExternalPreviewAndWatch(t *testing.T) {
 	log := filepath.Join(root, "args.log")
 	toolPath = filepath.Join(root, "tool")
 	os.WriteFile(toolPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+log+"'\nmkdir -p \"$3\"\nprintf '<html><head></head><body>regression</body></html>' > \"$3/print.html\"\n"), 0700)
+	// Il finto renderer emula un motore che rispetta @page size: la build chiede
+	// 5x8 con abbondanza (5.125x8.25 in = 369x594 pt), quindi il PDF prodotto ha
+	// quel formato. La guardia geometrica (printguard.go) rifiuta i PDF che non
+	// rispettano il formato richiesto.
 	fixture := filepath.Join(root, "fixture.pdf")
-	os.WriteFile(fixture, generateTestPDF(1), 0600)
+	os.WriteFile(fixture, generateTestPDFSized(1, 369, 594), 0600)
 	browser := filepath.Join(root, "renderer")
 	os.WriteFile(browser, []byte("#!/bin/sh\nfor a in \"$@\";do case \"$a\" in --print-to-pdf=*) cp '"+fixture+"' \"${a#--print-to-pdf=}\" ;; esac;done\n"), 0700)
 	t.Setenv("CHROMIUM_BIN", browser)

@@ -9,9 +9,14 @@ PubCraft is a free, open-source writing and publishing tool with a local browser
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Latest: 1.0.0-alpha.5 — Universal Mac app, native on Intel and Apple Silicon.**
+**Latest published: 1.0.0-alpha.5 — Universal Mac app, native on Intel and Apple Silicon.**
 
-### Download
+> **In preparation — 1.0.0-alpha.6 (candidate, NOT yet published):** this development branch
+> carries the next alpha.6 source and documentation. It is not a release yet: no downloads,
+> tag or packages exist for alpha.6 until it passes the full validation cycle. Please keep
+> using the alpha.5 downloads below; they remain the newest published version.
+
+### Download (published: 1.0.0-alpha.5)
 
 | Platform | Downloads |
 | --- | --- |
@@ -39,11 +44,15 @@ The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows ins
 
 ## What's new?
 
+**Alpha.6 (in preparation, candidate):** reinforced stability. A consistent section-type policy across the printed TOC, EPUB nav.xhtml and toc.ncx (per-format inclusion matrix, opt-in subheads, unknown types reported as warnings and paginated as normal chapters), CLI/GUI/`book.yaml` loading and validation parity for the `toc:` boolean options, PDF index-page cache keyed on the rendering environment so a changed setup cannot reuse stale page numbers, and a publication guard: a failed candidate PDF build keeps the previously published PDF untouched. The publication preview now warns when source files changed since the last render. The test hygiene pass consolidates 19 browser runners, and the AppImage tooling is pinned to appimagetool 1.9.1.
+
+**Included from alpha.5:** corkboard drag-anywhere and non-destructive folder ↔ `book.yaml` synchronization.
+
 **Alpha.4:** restored and expanded chapter reordering across views. Seamless up/down move arrows in the chapter list sidebar; previous/next move arrows and smooth drag-and-drop on the Corkboard (Lavagna) with zero accidental edit navigation and immediate persistence to `book.yaml`.
 
 **Included from alpha.3:** Universal 2 Mac app and portable tools (Intel + Apple Silicon native, no Rosetta required, macOS 13+ minimum).
 
-See the [alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md), [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md) and [validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
+See the [alpha.6 preparation notes](RELEASE_NOTES_1.0.0-alpha.6.md) (candidate, not yet published), [alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md), [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md), [alpha.6 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md) and the [alpha.5 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
 
 ## Why PubCraft?
 
@@ -51,7 +60,21 @@ See the [alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md), [alpha.4 notes](RELEASE
 - **Local-first:** no PubCraft account or cloud backend. External AI clients connected through MCP have their own privacy practices.
 - **Supported imports:** Vellum, Scrivener, DOCX, ODT, Markdown and PDF. Conversion is not an exact reproduction of every source feature; inspect the result.
 - **Writing and publishing:** chapter organization, notes, manuscript preview, typography controls and explicitly generated EPUB/PDF publication previews.
-- **Print:** HTML/PDF with trim and bleed controls. PDF generation requires an available supported renderer; pagination and appearance can vary.
+- **Print:** HTML/PDF with trim and bleed controls. PDF generation requires an available supported renderer; pagination and appearance can vary. The produced PDF is checked page by page against the requested format (trim plus bleed, ±1 point): a renderer that ignores the page size (an unpaginated single-page snapshot) makes the build fail with an explicit message instead of publishing the file, and the page-number cache is left untouched.
+- **Automatic table of contents:** generated in EPUB (hierarchical nav.xhtml + toc.ncx), in the HTML export, and in the printed index with page numbers measured on the real PDF. Configure subheadings and page numbers in `book.yaml`:
+
+  ```yaml
+  toc:
+    subheads: true       # nested h3 subheadings in the TOC (default: false)
+    pagenumbers: false   # page numbers in the printed TOC (default: true)
+  ```
+
+  Boolean options accept `true/false`, `yes/no`, `on/off` and `1/0`; an empty value, `~` or `null` keeps the default, and an invalid value is an explicit error in both the GUI and the CLI. TOC entries render inline emphasis in HTML, print and EPUB navigation (links stay plain text, so no nested links) and plain text in `toc.ncx`.
+
+  Chapter `type:` values are section-type strings: `chapter`, `dedication`, `epigraph`, `copyright`, `colophon` (alias of `copyright`), `about-author`, `acknowledgments`, `prologue`, `epilogue`, `preface`. The same policy table drives all three TOCs: in print, dedication, epigraph and copyright/colophon are front matter and stay out of the index, while in the EPUB nav.xhtml and toc.ncx they appear. Subheadings are opt-in (`toc.subheads`, default false). An unknown type is reported as a warning and paginated as a normal chapter; the value in `book.yaml` is never rewritten.
+
+  The publication preview shows page numbers only after a print build has cached the page map; until then its TOC stays without numbers so the render is not paid twice.
+
 - **Free/open source:** MIT code; fonts/dependencies retain separate licenses.
 
 ## Getting started

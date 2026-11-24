@@ -39,12 +39,52 @@ Esporta l'archivio in HTML e PDF impaginato per la stampa KDP.
 .SH TRIM KDP SUPPORTATI
 5x8, 5.25x8, 5.5x8.5, 6x9, 7x10, 8x10, 8.5x8.5, 8.5x11.
 .SH OPZIONI STAMPA
-[--trim 6x9] [--pages N] [--bleed|--no-bleed] [--pdf]
+[--trim 6x9] [--pages N] [--bleed|--no-bleed] [--pdf] [--toc-pagemap mappa.json]
+[--no-toc-pagenumbers]
+In stampa l'indice porta i numeri di pagina solo quando la mappa e' nota: con
+--toc-pagemap la CLI li applica, altrimenti emette i marcatori nascosti che
+la GUI legge dal PDF. --no-toc-pagenumbers disattiva numeri e marcatori.
+.SH VERIFICA DEL FORMATO DI PAGINA
+Prima di pubblicare, il PDF di stampa viene controllato pagina per pagina
+rispetto al formato richiesto (trim piu' abbondanza, tolleranza 1 punto
+tipografico). Se il motore produce pagine di dimensioni incompatibili - il
+caso tipico degli snapshot non impaginati - la build fallisce con un errore che
+indica motore, formato atteso e misure trovate; nessun artefatto viene
+pubblicato e la cache dei numeri di pagina non viene aggiornata. Un motore che
+ignora @page size va sostituito (Chromium/Chrome, weasyprint, wkhtmltopdf).
+.SH INDICE AUTOMATICO (book.yaml)
+PubCraft genera automaticamente l'indice in EPUB (nav.xhtml gerarchico +
+toc.ncx), nell'export HTML e nell'indice della versione stampata, con numeri
+di pagina calcolati sul PDF reale. Le opzioni si configurano in book.yaml:
+.nf
+  toc:
+    subheads: true|false      # sottocapi (h3) annidati nell'indice (default: false)
+    pagenumbers: true|false   # numeri di pagina nell'indice di stampa (default: true)
+.fi
+I booleani accettano true/false, yes/no, on/off e 1/0 senza distinzione di
+maiuscole; un valore vuoto, ~ o null significa "non impostato" e lascia il
+default. Un valore non valido e' un errore esplicito sia in CLI sia in GUI;
+un'opzione sconosciuta produce un avviso e viene ignorata.
+Con la GUI i numeri di pagina sono calcolati automaticamente a due passate e
+messi in cache: se la sorgente non cambia, la rigenerazione e' immediata.
+L'anteprima pubblicazione, che non puo' scrivere la cache, mostra l'indice
+senza numeri finche' non esiste una build di stampa valida.
+In HTML, stampa e nav EPUB le voci d'indice rendono il corsivo e il grassetto
+(del testo) ma non i link, che restano testo; in toc.ncx il testo e' puro.
+.SH TIPI DI SEZIONE
+Il campo `type` di ogni capitolo accetta: chapter, dedication, epigraph,
+copyright, colophon, about-author, acknowledgments, prologue, epilogue,
+preface. `colophon` e' un alias di `copyright`: in stampa e' la pagina di
+frontmatter (senza titolo di capitolo, capolettera e voce nell'indice
+stampato) e il valore scritto in book.yaml non viene riscritto. Un tipo non
+riconosciuto produce un avviso e il capitolo viene impaginato come capitolo
+normale, senza perdere contenuti.
 .SH ESEMPI
 .nf
 pubcraft build-print ./mio-libro ./out-stampa --trim 6x9 --pages 200
 pubcraft build ./mio-libro ./mio-libro.epub --kindle
 pubcraft export-md archivio.zip ./mio-libro-vault
+pubcraft build-print ./mio-libro ./out-stampa --toc-pagemap mappa.json
 .fi
 .SH NOTE
 Software open source distribuito con licenza MIT.

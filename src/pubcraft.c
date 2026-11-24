@@ -5,6 +5,12 @@
  * Licenza MIT — 2026 PubCraft Contributors.
  */
 #define _DARWIN_C_SOURCE 1
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+/* glibc only declares realpath() with _DEFAULT_SOURCE/_XOPEN_SOURCE; macOS
+ * gets it from _DARWIN_C_SOURCE. Without this the native Linux build fails
+ * with an implicit declaration of realpath(). */
+#define _DEFAULT_SOURCE 1
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +42,7 @@
 #include <windows.h>
 #endif
 
-#define VERSION "1.0.0-alpha.5"
+#define VERSION "1.0.0-alpha.6"
 
 static void die(const char *msg) { perror(msg); exit(1); }
 
@@ -847,10 +853,13 @@ typedef enum {
 } SegType;
 typedef struct { SegType type; char *text; char *imgkey; char *caption; int num; int level; } Seg;
 typedef struct { char *file; char *id; char *title; char *type; Seg *segs; size_t nseg, capseg; } Chapter;
+/* voce dell'indice: level 0 = capitolo, 1 = sottocapo (SEG_SUBHEAD) */
+typedef struct { int level, ch, sub; const char *title; const char *type; } TocEntry;
 typedef struct {
     char *title, *author, *language, *fmtver, *pkgver, *bookuuid;
     char *style, *opening, *font, *scenebreak, *cover, *trim;
     int pages, bleed;
+    int toc_subheads, toc_pagenumbers; /* config book.yaml `toc:` */
     char *vdir;
     Chapter *chs; size_t nch, capch;
     IdMap titles;
@@ -876,6 +885,203 @@ static char *dupstr(const char *s) {
     memcpy(o, s, l + 1);
     return o;
 }
+/* bool YAML tollerante (true/yes/1, false/no/0, case-insensitive) */
+/* Interpretazione booleana condivisa con la GUI (bookyaml.go `yamlBool`).
+ * Accetta true/false, yes/no, on/off, 1/0 (case-insensitive); i valori vuoti,
+ * assenti, `~` e `null` significano "non impostato" (resta il default).
+ * Ritorna 1 = valore valido scritto in *out, 0 = non impostato, -1 = non valido. */
+static int yaml_bool_parse(const char *s, int *out) {
+    if (!s) return 0;
+    while (*s == ' ' || *s == '\t') s++;
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' || s[n - 1] == '\r')) n--;
+    if (n == 0) return 0;
+    if (n >= 32) return -1;
+    char buf[32];
+    for (size_t i = 0; i < n; i++) buf[i] = (char)tolower((unsigned char)s[i]);
+    buf[n] = 0;
+    if (!strcmp(buf, "true") || !strcmp(buf, "yes") || !strcmp(buf, "on") || !strcmp(buf, "1")) {
+        *out = 1;
+        return 1;
+    }
+    if (!strcmp(buf, "false") || !strcmp(buf, "no") || !strcmp(buf, "off") || !strcmp(buf, "0")) {
+        *out = 0;
+        return 1;
+    }
+    if (!strcmp(buf, "~") || !strcmp(buf, "null")) return 0;
+    return -1;
+}
+
+/* --- Tipi editoriali delle sezioni ---------------------------------------
+ * Vocabolario unico condiviso con la GUI (booktypes.go): `colophon` è un alias
+ * di `copyright`, la pagina di frontmatter che ospita entrambi. */
+static int chapter_type_is(const char *t, const char *name) {
+    return t && !strcmp(t, name);
+}
+
+static int type_is_copyright(const char *t) {
+    return chapter_type_is(t, "copyright") || chapter_type_is(t, "colophon");
+}
+
+/* --- Politica degli indici: fonte canonica unica --------------------------
+ * Questa tabella è l'unico posto che decide se un tipo di sezione compare
+ * nell'indice, e per quale formato. NON decide la resa del corpo (titolo di
+ * capitolo, capolettera, pagina di frontmatter): quella resta nel writer di
+ * stampa, così "inclusione nell'indice" e "visibilità nel corpo" restano
+ * ortogonali. Un tipo assente dalla tabella è sconosciuto (avviso, incluso).
+ *
+ * I due writer ebook (nav.xhtml e toc.ncx) usano TOC_FMT_EBOOK per costruzione:
+ * le due liste non possono divergere.
+ *
+ * Matrice attuale (verificata da TestTocPolicyMatrix per stampa ed ebook, e
+ * internamente da tests/check_core.c per tutti i formati compreso HTML: la
+ * colonna HTML non è verificabile end-to-end finché l'importazione dagli
+ * archivi non conserva il tipo di sezione):
+ *                        stampa  ebook  html
+ *   chapter                sì      sì    sì
+ *   dedication             no      sì    sì
+ *   epigraph               no      sì    sì
+ *   copyright/colophon     no      sì    sì
+ *   about-author           sì      sì    sì
+ *   acknowledgments        sì      sì    sì
+ *   prologue               sì      sì    sì
+ *   epilogue               sì      sì    sì
+ *   preface                sì      sì    sì
+ *   (tipo non dichiarato)  sì      sì    sì
+ *   tipo sconosciuto       sì      sì    sì  (+ avviso)
+ */
+typedef enum { TOC_FMT_PRINT = 0, TOC_FMT_EBOOK, TOC_FMT_HTML, TOC_FMT_COUNT } TocFormat;
+
+typedef struct {
+    const char *type;              /* "" = tipo non dichiarato */
+    unsigned include[TOC_FMT_COUNT];
+} TocPolicyEntry;
+
+static const TocPolicyEntry TOC_POLICY[] = {
+    /*                                  PRINT EBOOK HTML */
+    {"chapter",         {                 1,    1,   1 }},
+    {"dedication",      {                 0,    1,   1 }},
+    {"epigraph",        {                 0,    1,   1 }},
+    {"copyright",       {                 0,    1,   1 }},
+    {"about-author",    {                 1,    1,   1 }},
+    {"acknowledgments", {                 1,    1,   1 }},
+    {"prologue",        {                 1,    1,   1 }},
+    {"epilogue",        {                 1,    1,   1 }},
+    {"preface",         {                 1,    1,   1 }},
+    {"",                {                 1,    1,   1 }},
+};
+#define TOC_POLICY_N (sizeof TOC_POLICY / sizeof TOC_POLICY[0])
+
+/* colophon è un alias editoriale di copyright: la tabella non lo duplica. */
+static const char *toc_policy_canonical(const char *t) {
+    if (!t) return "";
+    return type_is_copyright(t) ? "copyright" : t;
+}
+
+static int toc_policy_is_known(const char *t) {
+    const char *c = toc_policy_canonical(t);
+    for (size_t i = 0; i < TOC_POLICY_N; i++)
+        if (!strcmp(TOC_POLICY[i].type, c)) return 1;
+    return 0;
+}
+
+static int toc_policy_includes(const char *t, TocFormat fmt) {
+    if (fmt < 0 || fmt >= TOC_FMT_COUNT) return 1;
+    const char *c = toc_policy_canonical(t);
+    for (size_t i = 0; i < TOC_POLICY_N; i++)
+        if (!strcmp(TOC_POLICY[i].type, c)) return (int)TOC_POLICY[i].include[fmt];
+    return 1; /* tipo sconosciuto: incluso, come prima (con avviso) */
+}
+
+/* Elenco dei tipi supportati, generato dalla tabella (unica fonte). */
+static void print_supported_types(FILE *f) {
+    int first = 1;
+    for (size_t i = 0; i < TOC_POLICY_N; i++) {
+        if (!TOC_POLICY[i].type[0]) continue;
+        if (!first) fputs(", ", f);
+        fputs(TOC_POLICY[i].type, f);
+        if (!strcmp(TOC_POLICY[i].type, "copyright")) fputs(" (colophon alias)", f);
+        first = 0;
+    }
+}
+
+/* Avvisa (senza interrompere) per i tipi di sezione non riconosciuti: il
+ * capitolo viene impaginato come capitolo normale e i contenuti restano. */
+static void warn_unknown_chapter_types(const Book *bk) {
+    if (!bk) return;
+    char seen[16][64];
+    size_t nseen = 0;
+    for (size_t i = 0; i < bk->nch; i++) {
+        const char *t = bk->chs[i].type;
+        if (!t || !*t || toc_policy_is_known(t)) continue;
+        int dup = 0;
+        for (size_t k = 0; k < nseen; k++)
+            if (!strcmp(seen[k], t)) dup = 1;
+        if (dup) continue;
+        if (nseen < sizeof seen / sizeof seen[0]) {
+            snprintf(seen[nseen], sizeof seen[nseen], "%s", t);
+            nseen++;
+            fprintf(stderr,
+                    "avviso: tipo di sezione '%s' non riconosciuto (capitolo %zu): "
+                    "impaginato come capitolo normale. Tipi supportati: ",
+                    t, i + 1);
+            print_supported_types(stderr);
+            fputs(".\n", stderr);
+        }
+    }
+}
+
+/* Costruisce la lista delle voci dell'indice a partire dal libro.
+ * with_subheads: include i SEG_SUBHEAD dei capitoli (config toc.subheads).
+ * fmt: formato di destinazione; l'inclusione per tipo è decisa solo da
+ *      TOC_POLICY (toc_policy_includes), mai da questo writer.
+ * Ritorna il numero di voci.
+ * Le voci puntano a memoria del Book: non liberare i campi stringa. */
+static size_t book_build_toc(const Book *bk, TocEntry **out, int with_subheads, TocFormat fmt) {
+    TocEntry *v = NULL;
+    size_t n = 0, cap = 0;
+    for (size_t i = 0; i < bk->nch; i++) {
+        const Chapter *c = &bk->chs[i];
+        if (!toc_policy_includes(c->type, fmt)) continue;
+        if (n == cap) {
+            cap = cap ? cap * 2 : 16;
+            v = realloc(v, cap * sizeof *v);
+        }
+        v[n].level = 0;
+        v[n].ch = (int)i;
+        v[n].sub = 0;
+        v[n].title = c->title && *c->title ? c->title : "Capitolo";
+        v[n].type = c->type;
+        n++;
+        if (with_subheads) {
+            int subn = 0;
+            for (size_t j = 0; j < c->nseg; j++) {
+                if (c->segs[j].type != SEG_SUBHEAD) continue;
+                if (n == cap) {
+                    cap = cap ? cap * 2 : 16;
+                    v = realloc(v, cap * sizeof *v);
+                }
+                v[n].level = 1;
+                v[n].ch = (int)i;
+                v[n].sub = ++subn;
+                v[n].title = c->segs[j].text && *c->segs[j].text ? c->segs[j].text : "Sezione";
+                v[n].type = c->type;
+                n++;
+            }
+        }
+    }
+    *out = v;
+    return n;
+}
+
+/* Chiave di ancoraggio stabile di una voce TOC (usata nei marcatori nascosti
+ * e nella mappa pagina: es. "ch3" per il capitolo 3, "ch3-s2" per il suo
+ * secondo sottocapo). */
+static void toc_anchor_key(char *buf, size_t cap, const TocEntry *e) {
+    if (e->level == 0) snprintf(buf, cap, "ch%d", e->ch + 1);
+    else snprintf(buf, cap, "ch%d-s%d", e->ch + 1, e->sub);
+}
+
 static void chap_add_seg_full(Chapter *c, SegType t, const char *text,
                              const char *imgkey, const char *caption, int num, int level) {
     if (c->nseg == c->capseg) {
@@ -1212,6 +1418,7 @@ static int load_book(const char *src_archive, const char *tmp, Book *bk) {
     free(pending);
     bp_free(&bp);
     free(cb);
+    warn_unknown_chapter_types(bk);
     return 0;
 }
 
@@ -1241,48 +1448,57 @@ static void fprint_esc(FILE *f, const char *s) {
     free(clean);
 }
 
-static void fprint_md_inline(FILE *f, const char *s) {
+/* Opzioni di resa inline: il corpo rende anche i link, l'indice no (un <a>
+ * dentro l'<a> della voce non è valido), l'NCX vuole testo puro. */
+#define MD_INLINE_LINKS 1u /* rendi [testo](url) come <a href> */
+#define MD_INLINE_PLAIN 2u /* nessun tag: solo testo, con le etichette dei link */
+
+static void md_inline(FILE *f, const char *s, unsigned mdflags) {
     if (!s) return;
     char *clean = xml_sanitize_utf8(s);
     if (!clean) return;
     s = clean;
+    const int plain = (mdflags & MD_INLINE_PLAIN) != 0;
+    const int links = (mdflags & MD_INLINE_LINKS) != 0;
     const char *p = s;
     while (*p) {
-        // Codice inline `codice`
+        /* Codice inline `codice` */
         if (*p == '`') {
             const char *end = strchr(p + 1, '`');
             if (end) {
-                fputs("<code>", f);
+                if (!plain) fputs("<code>", f);
                 for (const char *q = p + 1; q < end; q++) fprint_esc_char(f, *q);
-                fputs("</code>", f);
+                if (!plain) fputs("</code>", f);
                 p = end + 1;
                 continue;
             }
         }
-        // Link [testo](url)
+        /* Link [testo](url): nel corpo diventa <a>, nell'indice resta il testo */
         if (*p == '[') {
             const char *cb = strchr(p + 1, ']');
             if (cb && cb[1] == '(') {
                 const char *cp = strchr(cb + 2, ')');
                 if (cp) {
-                    fputs("<a href=\"", f);
-                    for (const char *q = cb + 2; q < cp; q++) fprint_esc_char(f, *q);
-                    fputs("\">", f);
                     size_t tlen = (size_t)(cb - (p + 1));
                     char *sub = malloc(tlen + 1);
+                    if (links && !plain) {
+                        fputs("<a href=\"", f);
+                        for (const char *q = cb + 2; q < cp; q++) fprint_esc_char(f, *q);
+                        fputs("\">", f);
+                    }
                     if (sub) {
                         memcpy(sub, p + 1, tlen);
                         sub[tlen] = 0;
-                        fprint_md_inline(f, sub);
+                        md_inline(f, sub, mdflags);
                         free(sub);
                     }
-                    fputs("</a>", f);
+                    if (links && !plain) fputs("</a>", f);
                     p = cp + 1;
                     continue;
                 }
             }
         }
-        // Grassetto e corsivo *** o ___
+        /* Grassetto e corsivo *** o ___ */
         if ((p[0] == '*' && p[1] == '*' && p[2] == '*') || (p[0] == '_' && p[1] == '_' && p[2] == '_')) {
             char m = p[0];
             if (m == '_' && p > s && isalnum((unsigned char)p[-1])) {
@@ -1301,20 +1517,20 @@ static void fprint_md_inline(FILE *f, const char *s) {
                 q++;
             }
             if (end && end > p + 3) {
-                fputs("<strong><em>", f);
+                if (!plain) fputs("<strong><em>", f);
                 size_t n = (size_t)(end - (p + 3));
                 char *sub = malloc(n + 1);
                 if (sub) {
                     memcpy(sub, p + 3, n); sub[n] = 0;
-                    fprint_md_inline(f, sub);
+                    md_inline(f, sub, mdflags);
                     free(sub);
                 }
-                fputs("</em></strong>", f);
+                if (!plain) fputs("</em></strong>", f);
                 p = end + 3;
                 continue;
             }
         }
-        // Grassetto ** o __
+        /* Grassetto ** o __ */
         if ((p[0] == '*' && p[1] == '*') || (p[0] == '_' && p[1] == '_')) {
             char m = p[0];
             if (m == '_' && p > s && isalnum((unsigned char)p[-1])) {
@@ -1333,20 +1549,20 @@ static void fprint_md_inline(FILE *f, const char *s) {
                 q++;
             }
             if (end && end > p + 2) {
-                fputs("<strong>", f);
+                if (!plain) fputs("<strong>", f);
                 size_t n = (size_t)(end - (p + 2));
                 char *sub = malloc(n + 1);
                 if (sub) {
                     memcpy(sub, p + 2, n); sub[n] = 0;
-                    fprint_md_inline(f, sub);
+                    md_inline(f, sub, mdflags);
                     free(sub);
                 }
-                fputs("</strong>", f);
+                if (!plain) fputs("</strong>", f);
                 p = end + 2;
                 continue;
             }
         }
-        // Corsivo * o _
+        /* Corsivo * o _ */
         if (*p == '*' || *p == '_') {
             char m = *p;
             if (m == '_' && p > s && isalnum((unsigned char)p[-1])) {
@@ -1365,15 +1581,15 @@ static void fprint_md_inline(FILE *f, const char *s) {
                 q++;
             }
             if (end && end > p + 1) {
-                fputs("<em>", f);
+                if (!plain) fputs("<em>", f);
                 size_t n = (size_t)(end - (p + 1));
                 char *sub = malloc(n + 1);
                 if (sub) {
                     memcpy(sub, p + 1, n); sub[n] = 0;
-                    fprint_md_inline(f, sub);
+                    md_inline(f, sub, mdflags);
                     free(sub);
                 }
-                fputs("</em>", f);
+                if (!plain) fputs("</em>", f);
                 p = end + 1;
                 continue;
             }
@@ -1383,6 +1599,22 @@ static void fprint_md_inline(FILE *f, const char *s) {
     }
     free(clean);
 }
+
+/* Corpo: resa inline completa (anche i link). */
+static void fprint_md_inline(FILE *f, const char *s) {
+    md_inline(f, s, MD_INLINE_LINKS);
+}
+
+/* Voce d'indice in HTML/XHTML: resa inline valida ma senza link annidati. */
+static void fprint_md_toc(FILE *f, const char *s) {
+    md_inline(f, s, 0);
+}
+
+/* Voce d'indice in testo puro (toc.ncx): nessun tag, nessun delimitatore. */
+static void fprint_md_plain(FILE *f, const char *s) {
+    md_inline(f, s, MD_INLINE_PLAIN);
+}
+
 /* Stampa paragrafo iniziale avvolgendo il primo carattere alfabetico in <span class="dropcap"> */
 static void fprint_esc_with_dropcap(FILE *f, const char *s) {
     if (!s) return;
@@ -2098,24 +2330,53 @@ static int export_html_book(Book *bk, const char *imgd, const char *outdir) {
                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
                "<title>");
     fprint_esc(f, bk->title ? bk->title : "Libro");
-    fprintf(f, "</title>\n<style>\n%s\n</style>\n</head>\n<body>\n<header>\n<h1>", BOOK_CSS);
+    fprintf(f, "</title>\n<style>\n%s\n"
+               "nav.toc { margin: 2em auto; max-width: 40em; }\n"
+               "nav.toc ol { margin-left: 1.2em; }\n"
+               "nav.toc a { text-decoration: none; color: inherit; }\n"
+               "nav.toc .sub { margin-left: 1.2em; font-size: .95em; }\n"
+               "</style>\n</head>\n<body>\n<header>\n<h1>", BOOK_CSS);
     fprint_esc(f, bk->title ? bk->title : "Senza titolo");
     fprintf(f, "</h1>\n<p class=\"byline\">");
     fprint_esc(f, bk->author ? bk->author : "");
     fprintf(f, "</p>\n<p class=\"byline\">Generato da PubCraft %s</p>\n</header>\n<main>\n", VERSION);
+    {
+        TocEntry *tocv = NULL;
+        size_t ntoc = book_build_toc(bk, &tocv, bk->toc_subheads, TOC_FMT_HTML);
+        fprintf(f, "<nav class=\"toc\"><h2>Indice</h2>\n<ol>\n");
+        for (size_t k = 0; k < ntoc; k++) {
+            if (tocv[k].level != 0) continue;
+            fprintf(f, "<li><a href=\"#ch%d\">", tocv[k].ch + 1);
+            fprint_esc(f, tocv[k].title);
+            fprintf(f, "</a>\n");
+            int has_subs = 0;
+            for (size_t m = k + 1; m < ntoc && tocv[m].level == 1 && tocv[m].ch == tocv[k].ch; m++) {
+                if (!has_subs) { fprintf(f, "<ul class=\"sub\">\n"); has_subs = 1; }
+                fprintf(f, "<li><a href=\"#ch%d-s%d\">", tocv[m].ch + 1, tocv[m].sub);
+                fprint_md_toc(f, tocv[m].title);
+                fprintf(f, "</a></li>\n");
+            }
+            if (has_subs) fprintf(f, "</ul>\n");
+            fprintf(f, "</li>\n");
+        }
+        fprintf(f, "</ol></nav>\n");
+        free(tocv);
+    }
     for (size_t i = 0; i < bk->nch; i++) {
-        fprintf(f, "<section>\n<h2>");
+        fprintf(f, "<section>\n<h2 id=\"ch%zu\">", i + 1);
         fprint_esc(f, bk->chs[i].title);
         fprintf(f, "</h2>\n");
         ListState ls = {0};
         int in_bq = 0;
+        int html_subn = 0;
         for (size_t j = 0; j < bk->chs[i].nseg; j++) {
             Seg *s = &bk->chs[i].segs[j];
             if (s->type != SEG_UL_ITEM && s->type != SEG_OL_ITEM) { list_close_all(f, &ls); }
             if (s->type != SEG_BLOCKQUOTE && in_bq) { fprintf(f, "</blockquote>\n"); in_bq = 0; }
 
             if (s->type == SEG_SUBHEAD) {
-                fprintf(f, "<h3>");
+                html_subn++;
+                fprintf(f, "<h3 id=\"ch%zu-s%d\">", i + 1, html_subn);
                 fprint_md_inline(f, s->text ? s->text : "");
                 fprintf(f, "</h3>\n");
             } else if (s->type == SEG_H3) {
@@ -2427,13 +2688,15 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
         ListState ls = {0};
         int in_bq = 0;
         int is_first_p = 1;
+        int epub_subn = 0;
         for (size_t j = 0; j < bk->chs[c].nseg; j++) {
             Seg *s = &bk->chs[c].segs[j];
             if (s->type != SEG_UL_ITEM && s->type != SEG_OL_ITEM) { list_close_all(f, &ls); }
             if (s->type != SEG_BLOCKQUOTE && in_bq) { fprintf(f, "</blockquote>\n"); in_bq = 0; }
 
             if (s->type == SEG_SUBHEAD) {
-                fprintf(f, "<h3>");
+                epub_subn++;
+                fprintf(f, "<h3 id=\"s%d\">", epub_subn);
                 fprint_md_inline(f, s->text ? s->text : "");
                 fprintf(f, "</h3>\n");
             } else if (s->type == SEG_H3) {
@@ -2490,7 +2753,24 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
         fclose(f);
     }
 
-    /* nav.xhtml obbligatorio per EPUB 3 */
+    /* indice del libro (voci condivise da nav, NCX e styling) */
+    TocEntry *tocv = NULL;
+    size_t ntoc = book_build_toc(bk, &tocv, bk->toc_subheads, TOC_FMT_EBOOK);
+
+    /* primo capitolo di corpo (non frontmatter) per il landmark bodymatter */
+    size_t body_start = 0;
+    int have_body = 0;
+    for (size_t c = 0; c < bk->nch; c++) {
+        const char *t = bk->chs[c].type;
+        if (!t || !*t || !strcmp(t, "chapter")) {
+            body_start = c;
+            have_body = 1;
+            break;
+        }
+    }
+    if (!have_body) body_start = 0;
+
+    /* nav.xhtml obbligatorio per EPUB 3: TOC gerarchico + landmarks */
     char navp[PATH_MAX];
     snprintf(navp, sizeof navp, "%s/nav.xhtml", oebps);
     FILE *fn = fopen(navp, "w");
@@ -2503,13 +2783,92 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
                     "  <nav epub:type=\"toc\" id=\"toc\">\n"
                     "    <h2>Indice</h2>\n"
                     "    <ol>\n", lang);
-        for (size_t c = 0; c < bk->nch; c++) {
-            fprintf(fn, "      <li><a href=\"chap%03zu.xhtml\">", c + 1);
-            fprint_esc(fn, bk->chs[c].title ? bk->chs[c].title : "Capitolo");
-            fprintf(fn, "</a></li>\n");
+        for (size_t k = 0; k < ntoc; k++) {
+            if (tocv[k].level != 0) continue;
+            fprintf(fn, "      <li><a href=\"chap%03d.xhtml\">", tocv[k].ch + 1);
+            fprint_esc(fn, tocv[k].title);
+            fprintf(fn, "</a>\n");
+            /* sottocapi annidati sotto il capitolo */
+            int has_subs = 0;
+            for (size_t m = k + 1; m < ntoc && tocv[m].level == 1 && tocv[m].ch == tocv[k].ch; m++) {
+                if (!has_subs) {
+                    fprintf(fn, "        <ol>\n");
+                    has_subs = 1;
+                }
+                fprintf(fn, "          <li><a href=\"chap%03d.xhtml#s%d\">", tocv[m].ch + 1, tocv[m].sub);
+                fprint_md_toc(fn, tocv[m].title);
+                fprintf(fn, "</a></li>\n");
+            }
+            if (has_subs) fprintf(fn, "        </ol>\n");
+            fprintf(fn, "      </li>\n");
         }
-        fprintf(fn, "    </ol>\n  </nav>\n</body>\n</html>\n");
+        fprintf(fn, "    </ol>\n  </nav>\n");
+        fprintf(fn, "  <nav epub:type=\"landmarks\" id=\"landmarks\" hidden=\"\">\n"
+                    "    <h2>Informazioni</h2>\n"
+                    "    <ol>\n"
+                    "      <li><a epub:type=\"toc\" href=\"nav.xhtml\">Indice</a></li>\n");
+        fprintf(fn, "      <li><a epub:type=\"bodymatter\" href=\"chap%03zu.xhtml\">Inizio</a></li>\n",
+                body_start + 1);
+        fprintf(fn, "    </ol>\n  </nav>\n");
+        fprintf(fn, "</body>\n</html>\n");
         fclose(fn);
+    }
+
+    /* toc.ncx per compatibilita' EPUB 2 / vecchi reader (stessa gerarchia) */
+    {
+        char ncp[PATH_MAX];
+        snprintf(ncp, sizeof ncp, "%s/toc.ncx", oebps);
+        FILE *fx = fopen(ncp, "w");
+        if (fx) {
+            char pub_uuid[64] = "pubcraft-untitled";
+            if (bk->bookuuid && bk->bookuuid[0] && uuid_publication_value(bk->bookuuid, pub_uuid, sizeof pub_uuid)) {
+                char tmpu[80];
+                snprintf(tmpu, sizeof tmpu, "urn:uuid:%s", pub_uuid);
+                snprintf(pub_uuid, sizeof pub_uuid, "%s", tmpu);
+            } else if (bk->bookuuid && bk->bookuuid[0]) {
+                snprintf(pub_uuid, sizeof pub_uuid, "%s", bk->bookuuid);
+            }
+            fprintf(fx, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+                        "<!DOCTYPE ncx PUBLIC \"-//NISO//DTD ncx 2005-1//EN\" \"http://www.daisy.org/z3986/2005/ncx-2005-1.dtd\">\n"
+                        "<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\" xml:lang=\"%s\">\n"
+                        "<head>\n"
+                        "  <meta name=\"dtb:uid\" content=\"", lang);
+            fprint_esc(fx, pub_uuid);
+            fprintf(fx, "\"/>\n"
+                        "  <meta name=\"dtb:depth\" content=\"%d\"/>\n"
+                        "  <meta name=\"dtb:totalPageCount\" content=\"0\"/>\n"
+                        "  <meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n"
+                        "</head>\n", bk->toc_subheads ? 2 : 1);
+            fprintf(fx, "<docTitle><text>");
+            fprint_esc(fx, bk->title ? bk->title : "Senza titolo");
+            fprintf(fx, "</text></docTitle>\n<navMap>\n");
+            /* le voci figlie contano nel playOrder globale */
+            long npn = 0;
+            for (size_t k = 0; k < ntoc; k++) {
+                if (tocv[k].level != 0) continue;
+                npn++;
+                fprintf(fx, "<navPoint id=\"np%ld\" playOrder=\"%ld\">\n"
+                            "  <navLabel><text>", npn, npn);
+                fprint_md_plain(fx, tocv[k].title);
+                fprintf(fx, "</text></navLabel>\n"
+                            "  <content src=\"chap%03d.xhtml\"/>\n", tocv[k].ch + 1);
+                for (size_t m = k + 1; m < ntoc && tocv[m].level == 1 && tocv[m].ch == tocv[k].ch; m++) {
+                    npn++;
+                    fprintf(fx, "  <navPoint id=\"np%ld\" playOrder=\"%ld\">\n"
+                                "    <navLabel><text>", npn, npn);
+                    fprint_md_plain(fx, tocv[m].title);
+                    fprintf(fx, "</text></navLabel>\n"
+                                "    <content src=\"chap%03d.xhtml#s%d\"/>\n"
+                                "  </navPoint>\n", tocv[m].ch + 1, tocv[m].sub);
+                }
+                fprintf(fx, "</navPoint>\n");
+            }
+            fprintf(fx, "</navMap>\n</ncx>\n");
+            fclose(fx);
+            free(tocv);
+            tocv = NULL;
+            ntoc = 0;
+        }
     }
 
     /* immagini usate (per il manifest) */
@@ -2591,6 +2950,7 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
     fprintf(opf, "<meta property=\"dcterms:modified\">2026-10-20T00:00:00Z</meta>\n"
                  "</metadata>\n<manifest>\n");
     fprintf(opf, "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n");
+    fprintf(opf, "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n");
     for (size_t c = 0; c < bk->nch; c++)
         fprintf(opf, "<item id=\"c%zu\" href=\"chap%03zu.xhtml\" media-type=\"application/xhtml+xml\"/>\n",
                 c + 1, c + 1);
@@ -2606,11 +2966,16 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
         fprint_esc(opf, used[k]);
         fprintf(opf, "\" media-type=\"%s\"/>\n", media_type_for(used[k]));
     }
-    fprintf(opf, "<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n</manifest>\n<spine>\n");
+    fprintf(opf, "<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n</manifest>\n");
+    /* EPUB2 compat: spine con attributo toc=ncx; EPUB3: nav.xhtml nello spine */
+    fprintf(opf, "<spine toc=\"ncx\">\n");
+    fprintf(opf, "<itemref idref=\"nav\"/>\n");
     for (size_t c = 0; c < bk->nch; c++) fprintf(opf, "<itemref idref=\"c%zu\"/>\n", c + 1);
     fprintf(opf, "</spine>\n</package>\n");
     fclose(opf);
     free(used);
+    free(tocv);
+    tocv = NULL;
 
 #ifdef _WIN32
     int rc = write_stored_epub(buildt, abs_outepub);
@@ -2680,6 +3045,60 @@ static int cmd_open(const char *archive_path) {
 }
 
 /* ---------- stampa: HTML impaginato con misure KDP ---------- */
+
+/* Mappa pagina→voce TOC: JSON piatto {"ch1": 12, "ch2-s3": 45, ...}
+ * prodotta dalla GUI estraendo i marcatori nascosti dal PDF della prima
+ * passata (meccanismo pageCountMap di Vellum, adattato). */
+typedef struct { char key[64]; int page; } PgMapEnt;
+
+static int pgmap_load(const char *path, PgMapEnt **out, size_t *n) {
+    *out = NULL;
+    *n = 0;
+    if (!path || !path[0]) return -1;
+    size_t len = 0;
+    char *d = (char *)read_file(path, &len);
+    if (!d) return -1;
+    PgMapEnt *m = NULL;
+    size_t nm = 0, cap = 0;
+    size_t i = 0;
+    while (i < len) {
+        if (d[i] != '"') { i++; continue; }
+        size_t ks = ++i;
+        while (i < len && d[i] != '"') i++;
+        if (i >= len) break;
+        size_t kl = i - ks;
+        if (kl == 0 || kl >= sizeof((PgMapEnt *)0)->key) { i++; continue; }
+        i++;
+        while (i < len && (d[i] == ' ' || d[i] == ':' || d[i] == '\n' || d[i] == '\r' || d[i] == '\t')) i++;
+        if (i >= len || d[i] < '0' || d[i] > '9') continue;
+        int pg = atoi(d + i);
+        if (pg > 0) {
+            if (nm == cap) {
+                cap = cap ? cap * 2 : 16;
+                m = realloc(m, cap * sizeof *m);
+            }
+            memset(&m[nm], 0, sizeof m[nm]);
+            memcpy(m[nm].key, d + ks, kl);
+            m[nm].page = pg;
+            nm++;
+        }
+    }
+    free(d);
+    *out = m;
+    *n = nm;
+    return 0;
+}
+
+static int pgmap_get(const PgMapEnt *m, size_t n, const char *key, int *page) {
+    for (size_t i = 0; i < n; i++) {
+        if (!strcmp(m[i].key, key)) {
+            *page = m[i].page;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 struct Trim { const char *name; double w, h; };
 static const struct Trim TRIMS[] = {
     {"5x8", 5, 8}, {"5.25x8", 5.25, 8}, {"5.5x8.5", 5.5, 8.5},
@@ -2698,9 +3117,24 @@ static double kdp_gutter(int pages) {
 #define PUBCRAFT_SWASH_SVG "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 96'%3E%3Cpath d='M243.442 20.752c0 3.5-2.226 6.372-6.668 8.628-4.454 2.25-11.172 3.524-20.172 3.828-.21 3-1.258 6.046-3.148 9.148 3.61 1.106 6.75 3 9.446 5.704 2.704 2.698 4.054 5.944 4.054 9.75 0 3.398-1.172 6.55-3.528 9.446s-5.39 5.39-9.14 7.5c-3.75 2.102-7.972 3.726-12.668 4.87-4.7 1.142-9.398 1.724-14.11 1.724-3.398 0-6.808-.278-10.2-.84-3.396-.548-7.146-1.462-11.25-2.766-4.114-1.3-8.778-3.058-14.028-5.25-5.25-2.2-11.528-4.946-18.828-8.25a296.124 296.124 0 01-11.102 7.722c-3.7 2.45-7.348 4.582-10.95 6.376-3.602 1.794-7.148 3.222-10.648 4.28-3.5 1.048-6.902 1.58-10.204 1.58-4.996 0-9.07-1.228-12.226-3.68-3.148-2.446-4.976-5.63-5.472-9.516-1.102.202-2.652.422-4.648.664-2 .262-3.95.376-5.852.376-3.3 0-6.352-.432-9.148-1.288-2.796-.856-5.25-2.106-7.352-3.75a16.764 16.764 0 01-4.872-6.08c-1.152-2.382-1.726-5.132-1.726-8.25 0-4.296 1.296-8.026 3.898-11.172 2.602-3.148 6-5.746 10.2-7.796 4.2-2.046 8.95-3.578 14.25-4.578 5.3-1 10.652-1.5 16.05-1.5.796-2.598 2.328-4.922 4.578-6.976 2.25-2.046 4.95-3.796 8.102-5.25 3.148-1.45 6.68-2.546 10.578-3.296a62.583 62.583 0 0111.852-1.128c3.496 0 7.32.324 11.476.98 4.144.648 8.32 1.45 12.524 2.398 4.196.954 8.266 1.98 12.226 3.078a1624.86 1624.86 0 0110.578 3c4.996-2.5 9.696-4.454 14.102-5.852 4.398-1.394 9.304-2.098 14.708-2.098 2.484 0 5.042.356 7.636 1.05 2.594.696 4.75 1.5 6.438 2.398 2.898-1 5.958-1.894 9.152-2.7 3.2-.796 6.796-1.2 10.804-1.2 4.692 0 8.418.876 11.168 2.624 2.75 1.748 4.12 3.796 4.12 6.092zm-110.248 20.1c-6.102-2.102-11.528-3.876-16.274-5.328-4.75-1.444-8.976-2.644-12.67-3.596-3.704-.95-6.954-1.654-9.75-2.102-2.8-.454-5.25-.726-7.348-.828l-.3 2.25c-.3 2.204-.204 4 .3 5.398.496 1.406 1.176 2.5 2.02 3.3.848.796 1.754 1.376 2.704 1.73.946.352 1.77.52 2.476.52.3 0 .372.128.218.372-.148.254-.472.324-.968.23-.704 0-1.676-.2-2.93-.602-1.246-.394-2.454-1.05-3.602-1.95-1.144-.898-2.144-2.074-3-3.524-.852-1.446-1.27-3.226-1.27-5.328 0-.898.102-1.746.3-2.546-4.304 0-8.73.324-13.282.976-4.546.652-8.672 1.828-12.376 3.528-3.696 1.708-6.726 4.074-9.07 7.122-2.352 3.054-3.524 6.93-3.524 11.626 0 6 1.624 10.628 4.872 13.876 3.248 3.248 7.476 4.872 12.672 4.872 2 0 3.95-.102 5.852-.298 1.894-.202 3.394-.452 4.5-.75.094-2.902.898-5.48 2.398-7.73s3.5-4.196 6-5.852c2.504-1.648 5.296-2.894 8.402-3.75 3.102-.856 6.296-1.266 9.598-1.266 2.898 0 5.726.27 8.48.82 2.746.548 4.672.97 5.77 1.278a261.25 261.25 0 009.902-6 466.17 466.17 0 009.9-6.448zm-22.792 14.25c-1.304-.598-3.128-1.146-5.48-1.652-2.352-.49-4.624-.75-6.82-.75-5.906 0-10.8 1.156-14.7 3.456-3.902 2.3-5.852 5.652-5.852 10.046v1.204c0 .5.046.898.148 1.2 2.102-.496 4.55-1.246 7.352-2.25 2.792-.996 5.7-2.122 8.7-3.376 3-1.242 5.976-2.542 8.922-3.888 2.952-1.364 5.526-2.688 7.73-3.99zm21.448 8.552a526.336 526.336 0 01-10.726-4.426c-3.656-1.544-6.726-2.716-9.23-3.53-4.5 2.308-9.472 4.678-14.922 7.132-5.454 2.456-11.778 4.784-18.976 6.976.696 3.5 2.52 6.294 5.476 8.388 2.946 2.112 6.372 3.148 10.274 3.148 3.196 0 6.426-.508 9.672-1.5 3.25-1.004 6.496-2.34 9.75-3.974a86.157 86.157 0 009.598-5.69c3.152-2.14 6.178-4.32 9.084-6.524zm28.2-39.902c-3.208-1-6.878-2.098-11.03-3.296a442.362 442.362 0 00-12.602-3.454 193.844 193.844 0 00-12.296-2.77c-3.958-.75-7.328-1.128-10.128-1.128-7.5 0-13.554 1.2-18.152 3.602-4.602 2.398-7.402 6.102-8.398 11.098 5.296.2 12.176 1.004 20.624 2.402 8.458 1.394 18.23 4 29.332 7.796 1.2-.796 2.746-1.82 4.648-3.07a224.47 224.47 0 016.152-3.898c2.204-1.352 4.352-2.672 6.446-3.972 2.1-1.306 3.904-2.408 5.404-3.31zm-7.2 24.454c-2.396-.902-5.274-1.976-8.626-3.23a658.83 658.83 0 00-9.676-3.52 507.986 507.986 0 01-9.75 6.226c-3.3 2.054-6.554 4.07-9.75 6.074 1.2.304 2.624.726 4.27 1.278 1.648.55 3.394 1.148 5.25 1.8 1.856.648 3.726 1.328 5.628 2.024a97.95 97.95 0 015.25 2.108c3-2.3 5.93-4.476 8.778-6.53 2.848-2.054 5.726-4.134 8.626-6.23zm69.752 9.744c0-7.884-3.352-12.744-10.05-14.544-2.602 3.5-6.45 6.37-11.554 8.626-5.098 2.25-11.394 3.374-18.894 3.374-2.398 0-4.624-.146-6.676-.456a47.129 47.129 0 01-6.222-1.348 116.453 116.453 0 01-6.75-2.168 272.6 272.6 0 00-8.25-2.782 606.44 606.44 0 00-8.624 6.296 627.121 627.121 0 01-8.774 6.454c2.796 1.108 6.454 2.626 10.954 4.574 4.5 1.958 9.32 3.866 14.476 5.708a183.078 183.078 0 0015.826 4.876c5.39 1.394 10.382 2.098 15 2.098 3.5 0 6.996-.348 10.5-1.05 3.5-.696 6.676-1.868 9.528-3.524a20.518 20.518 0 006.898-6.372c1.724-2.604 2.612-5.86 2.612-9.762zm-41.704-28.494a678.603 678.603 0 00-9.528-2.48c-3.75-.95-7.074-1.872-9.972-2.77-1.886 1.2-3.95 2.476-6.14 3.82a449.982 449.982 0 00-6.376 3.976 381.345 381.345 0 01-5.78 3.602c-1.798 1.106-3.254 2.05-4.348 2.852 1.5.496 3.126 1.07 4.874 1.728a343.96 343.96 0 009.97 3.524c1.5.504 2.746.898 3.75 1.2a283.346 283.346 0 0111.626-8.024 316.173 316.173 0 0111.924-7.428zm32.098 3.75c-4.102 0-8.648-.23-13.644-.68-5.008-.45-10.554-1.324-16.648-2.628a194.624 194.624 0 00-12.216 7.282 176.687 176.687 0 00-11.626 8.172c6 2.3 11.646 4.154 16.95 5.546 5.294 1.406 9.394 2.112 12.3 2.112 5.394 0 9.972-.876 13.722-2.624 3.75-1.748 6.622-4.226 8.622-7.422-.602-.2-1.696-.3-3.3-.3-.89 0-2.032.078-3.372.23a18.393 18.393 0 00-3.828.828c-.398.204-.648.148-.75-.148-.11-.304.102-.554.602-.75.898-.398 2.11-.704 3.61-.906 1.5-.196 2.942-.296 4.356-.296.614 0 1.188.024 1.804.078.602.046 1.054.07 1.352.07a20.823 20.823 0 001.418-4.196c.34-1.5.554-2.974.648-4.368zm-8.394-15.904c-1.304-1-3.078-1.824-5.328-2.476-2.25-.652-4.422-.976-6.528-.976-4.402 0-8.602.574-12.598 1.726-4.008 1.152-8.402 2.922-13.208 5.32 1.308.406 2.932.876 4.874 1.43 1.95.55 3.894 1.106 5.864 1.648 1.946.55 3.714 1.028 5.32 1.422 1.598.406 2.696.704 3.304.902 1.594-.902 3.27-1.8 5.02-2.7a512.407 512.407 0 015.176-2.628c1.7-.856 3.254-1.606 4.652-2.25 1.392-.648 2.542-1.118 3.452-1.418zm8.25 14.404c.196-2.598-.43-5.206-1.876-7.8-1.454-2.598-3.176-4.546-5.176-5.852-1 .398-2.278.926-3.824 1.57a72.807 72.807 0 00-4.8 2.25c-1.644.856-3.286 1.708-4.878 2.554-1.618.848-3 1.624-4.2 2.32 1.5.398 3.286.876 5.336 1.43 2.04.55 4.16 1.07 6.368 1.57a97.51 97.51 0 006.676 1.27c2.24.362 4.366.582 6.374.688zm26.09-10.204c0-2.192-.996-4.07-3-5.628-1.992-1.546-5.106-2.32-9.292-2.32-3.704 0-6.86.3-9.458.902a57.075 57.075 0 00-7.792 2.398c2.296 1.5 4.124 3.704 5.472 6.602 1.336 2.894 1.918 5.7 1.714 8.398 6.8 0 12.222-.876 16.286-2.628 4.054-1.748 6.07-4.322 6.07-7.724z' fill='%231a1815' fill-rule='evenodd'/%3E%3C/svg%3E"
 
 static int export_print_book(Book *bk, const char *imgd, const char *outdir,
-                             double tw, double th, int pages, int bleed, int want_pdf) {
+                             double tw, double th, int pages, int bleed, int want_pdf,
+                             const char *pagemap_path, int no_toc_numbers) {
     (void)imgd;
     mkdir_p(outdir);
+
+    /* --no-toc-pagenumbers: l'indice resta un elenco senza numeri (nessun
+     * marcatore nascosto, nessuna colonna vuota). Usato dall'anteprima, che
+     * non deve pagare la passata di esplorazione. */
+    if (no_toc_numbers) bk->toc_pagenumbers = 0;
+
+    /* config indice: sottocapi + numeri di pagina (con eventuale mappa) */
+    PgMapEnt *pm = NULL;
+    size_t npm = 0;
+    int have_map = 0;
+    if (bk->toc_pagenumbers && pgmap_load(pagemap_path, &pm, &npm) == 0 && npm > 0)
+        have_map = 1;
+    TocEntry *tocv = NULL;
+    size_t ntoc = book_build_toc(bk, &tocv, bk->toc_subheads, TOC_FMT_PRINT);
     double gutter = kdp_gutter(pages);
     double pw = tw + (bleed ? 0.125 : 0), ph = th + (bleed ? 0.25 : 0);
     double m_top = 0.75 + (bleed ? 0.125 : 0);
@@ -2771,7 +3205,17 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
                ".titlepage { page: frontmatter; page-break-after: always; text-align: center; padding-top: 2in; }\n"
                ".titlepage h1 { font-size: 24pt; }\n"
                ".copyright { page: frontmatter; page-break-after: always; font-size: 9pt; padding-top: 4in; }\n"
+               ".custom-copyright { page-break-before: always; padding-top: 0; }\n"
+               ".custom-copyright h2 { display: none; }\n"
+               ".custom-copyright p { font-size: 9pt; text-indent: 0; text-align: left; }\n"
                ".toc { page: frontmatter; page-break-after: always; }\n"
+               ".toc-list { display: table; width: 100%%; margin-top: 1em; }\n"
+               ".toc-item { display: table-row; }\n"
+               ".toc-t { display: table-cell; padding-right: .75em; }\n"
+               ".toc-t a { text-decoration: none; color: inherit; }\n"
+               ".toc-p { display: table-cell; width: 3em; text-align: right; vertical-align: bottom; white-space: nowrap; font-variant-numeric: lining-nums; }\n"
+               ".toc-item.lv1 .toc-t { padding-left: 1.5em; }\n"
+               ".pgmark { color: #ffffff; font-size: .5pt; position: absolute; }\n"
                ".dedication { page: frontmatter; page-break-before: always; page-break-after: always; text-align: center; padding-top: 2.2in; font-style: italic; }\n"
                ".dedication h2 { display: none; }\n"
                ".dedication p { text-align: center; text-indent: 0; font-size: 11pt; line-height: 1.8; margin-bottom: 0.8em; }\n"
@@ -2822,38 +3266,90 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
     fprint_esc(f, bk->title ? bk->title : "Senza titolo");
     fprintf(f, "</h1><p style=\"text-align:center;text-indent:0\">");
     fprint_esc(f, bk->author ? bk->author : "");
-    fprintf(f, "</p></div>\n"
-               "<div class=\"copyright\"><p class=\"noindent\">");
-    fprint_esc(f, bk->title ? bk->title : "");
-    fprintf(f, " — Copyright &copy; ");
-    fprint_esc(f, bk->author ? bk->author : "");
-    fprintf(f, ". Tutti i diritti riservati.<br>"
-               "Prima edizione. (Completa questa pagina prima della stampa.)</p></div>\n");
-    fprintf(f, "<div class=\"toc\"><h2>Indice</h2>\n<ol>\n");
+    fprintf(f, "</p></div>\n");
+    int has_copyright = 0;
     for (size_t i = 0; i < bk->nch; i++) {
-        if (bk->chs[i].type && (!strcmp(bk->chs[i].type, "dedication") || !strcmp(bk->chs[i].type, "epigraph")))
-            continue;
-        fprintf(f, "<li><a href=\"#ch%zu\">", i + 1);
-        fprint_esc(f, bk->chs[i].title);
-        fprintf(f, "</a></li>\n");
+        if (bk->chs[i].type && !strcmp(bk->chs[i].type, "copyright")) {
+            has_copyright = 1;
+            break;
+        }
     }
-    fprintf(f, "</ol></div>\n");
+    if (!has_copyright) {
+        fprintf(f, "<div class=\"copyright\"><p class=\"noindent\">");
+        fprint_esc(f, bk->title ? bk->title : "");
+        fprintf(f, " — Copyright &copy; ");
+        fprint_esc(f, bk->author ? bk->author : "");
+        fprintf(f, ". Tutti i diritti riservati.<br>"
+                   "Prima edizione. (Completa questa pagina prima della stampa.)</p></div>\n");
+    }
+    fprintf(f, "<div class=\"toc\"><h2>Indice</h2>\n");
+    if (bk->toc_pagenumbers) {
+        /* righe table-cell: larghezza fissa => aggiungere i numeri non cambia
+         * la paginazione (tecnica tocBase.css di Vellum) */
+        fprintf(f, "<div class=\"toc-list\">\n");
+        for (size_t k = 0; k < ntoc; k++) {
+            char key[64];
+            toc_anchor_key(key, sizeof key, &tocv[k]);
+            int pg = 0;
+            int known = have_map && pgmap_get(pm, npm, key, &pg);
+            fprintf(f, "<div class=\"toc-item lv%d\">\n"
+                       "<div class=\"toc-t\"><a href=\"#%s\">", tocv[k].level, key);
+            if (tocv[k].level == 0) fprint_esc(f, tocv[k].title);
+            else fprint_md_toc(f, tocv[k].title);
+            fprintf(f, "</a></div>\n"
+                       "<div class=\"toc-p\">");
+            if (known) fprintf(f, "%d", pg);
+            fprintf(f, "</div>\n</div>\n");
+        }
+        fprintf(f, "</div>\n");
+    } else {
+        fprintf(f, "<ol>\n");
+        for (size_t k = 0; k < ntoc; k++) {
+            char key[64];
+            toc_anchor_key(key, sizeof key, &tocv[k]);
+            if (tocv[k].level == 0) {
+                fprintf(f, "<li><a href=\"#%s\">", key);
+                fprint_esc(f, tocv[k].title);
+                fprintf(f, "</a>\n");
+                int has_subs = 0;
+                for (size_t m = k + 1; m < ntoc && tocv[m].level == 1 && tocv[m].ch == tocv[k].ch; m++) {
+                    if (!has_subs) { fprintf(f, "<ul>\n"); has_subs = 1; }
+                    char skey[64];
+                    toc_anchor_key(skey, sizeof skey, &tocv[m]);
+                    fprintf(f, "<li><a href=\"#%s\">", skey);
+                    fprint_md_toc(f, tocv[m].title);
+                    fprintf(f, "</a></li>\n");
+                }
+                if (has_subs) fprintf(f, "</ul>\n");
+                fprintf(f, "</li>\n");
+            }
+        }
+        fprintf(f, "</ol>\n");
+    }
+    fprintf(f, "</div>\n");
     for (size_t i = 0; i < bk->nch; i++) {
         int is_ded = bk->chs[i].type && !strcmp(bk->chs[i].type, "dedication");
         int is_epi = bk->chs[i].type && !strcmp(bk->chs[i].type, "epigraph");
         int is_auth = bk->chs[i].type && !strcmp(bk->chs[i].type, "about-author");
         int is_ack = bk->chs[i].type && !strcmp(bk->chs[i].type, "acknowledgments");
+        int is_copy = type_is_copyright(bk->chs[i].type);
         const char *cls = "chapter";
-        if (is_ded) cls = "dedication";
+        if (is_copy) cls = "copyright custom-copyright";
+        else if (is_ded) cls = "dedication";
         else if (is_epi) cls = "epigraph";
         else if (is_auth) cls = "chapter about-author";
         else if (is_ack) cls = "chapter acknowledgments";
 
         fprintf(f, "<div class=\"%s\" id=\"ch%zu\">", cls, i + 1);
-        if (!is_ded && !is_epi) {
+        if (!is_ded && !is_epi && !is_copy) {
             fprintf(f, "<h2>");
             fprint_esc(f, bk->chs[i].title);
             fprintf(f, "</h2>\n");
+            /* marcatore nascosto (bianco su bianco, .5pt) per l'estrazione
+             * pagina→voce TOC nella passata di esplorazione; viene rimosso
+             * nella passata finale quando la mappa è nota */
+            if (bk->toc_pagenumbers && !have_map)
+                fprintf(f, "<span class=\"pgmark\">PCMAP-ch%zu-</span>\n", i + 1);
         }
         int first = 1, subn = 0;
         ListState ls = {0};
@@ -2868,6 +3364,8 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
                 fprintf(f, "<h3 id=\"ch%zu-s%d\">", i + 1, subn);
                 fprint_md_inline(f, s->text ? s->text : "");
                 fprintf(f, "</h3>\n");
+                if (bk->toc_pagenumbers && !have_map && !is_copy && !is_ded && !is_epi)
+                    fprintf(f, "<span class=\"pgmark\">PCMAP-ch%zu-s%d-</span>\n", i + 1, subn);
                 first = 1;
             } else if (s->type == SEG_H3) {
                 fprintf(f, "<h4>");
@@ -2935,7 +3433,7 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
                         if (is_scene_break(t2)) {
                             fprintf(f, "<hr class=\"sb\"/>\n");
                             fp = 1;
-                        } else if (is_ded || is_epi) {
+                        } else if (is_ded || is_epi || is_copy) {
                             fprintf(f, "<p class=\"noindent\">");
                             fprint_md_inline(f, t2);
                             fprintf(f, "</p>\n");
@@ -3038,12 +3536,15 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
         if (real_pages > 0 && kdp_gutter(real_pages) != gutter) {
             printf("Ricalcolo gutter KDP sulle pagine effettive (%d pag., gutter %.3f in anziche' %.3f in)...\n",
                    real_pages, kdp_gutter(real_pages), gutter);
-            return export_print_book(bk, imgd, outdir, tw, th, real_pages, bleed, want_pdf);
+            free(pm); free(tocv);
+            return export_print_book(bk, imgd, outdir, tw, th, real_pages, bleed, want_pdf,
+                                     pagemap_path, no_toc_numbers);
         }
     } else {
         fprintf(stderr, "errore: il motore %s ha fallito la generazione del PDF (rc=%d)\n", how, rc);
         rc = 1;
     }
+    free(pm); free(tocv);
     return rc;
 }
 
@@ -3065,7 +3566,8 @@ static int is_scene_break(const char *s) {
 }
 
 static int export_print(const char *archive_path, const char *outdir,
-                        double tw, double th, int pages, int bleed, int want_pdf) {
+                        double tw, double th, int pages, int bleed, int want_pdf,
+                        int no_toc_numbers) {
     char *tmp = mk_tmpdir();
     Book bk;
     int rc = load_book(archive_path, tmp, &bk);
@@ -3074,7 +3576,7 @@ static int export_print(const char *archive_path, const char *outdir,
         snprintf(imgd, sizeof imgd, "%s/images", outdir);
         copy_images(tmp, imgd);
         resolve_archive_images(&bk, imgd);
-        rc = export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf);
+        rc = export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf, NULL, no_toc_numbers);
     }
     rm_rf_path(tmp);
     free(tmp);
@@ -4074,10 +4576,16 @@ static int load_vault(const char *vdir, Book *bk) {
         }
         uuid_scan_free(&us);
     }
+    /* indice: defaults editoriali come Vellum — numeri di pagina ON,
+     * sottocapi OFF (opt-in). Se il vault esplicita `toc:` si sovrascrivono. */
+    bk->toc_pagenumbers = 1;
+    bk->toc_subheads = 0;
     ChEntry *ents = NULL;
     size_t nen = 0, capen = 0;
     ChEntry *cur_e = NULL;
     int in_ch = 0;
+    int in_toc = 0;
+    int toc_bad = 0;
     char *line = strtok(xy, "\n");
     while (line) {
         int indent = 0;
@@ -4091,8 +4599,18 @@ static int load_vault(const char *vdir, Book *bk) {
         if (!*l || *l == '#') { line = strtok(NULL, "\n"); continue; }
         if (!strcmp(l, "chapters:")) {
             in_ch = 1;
+            in_toc = 0;
+        } else if (indent == 0 && (!strcmp(l, "toc:") || !strncmp(l, "toc:", 4))) {
+            /* il blocco toc: puo' stare prima o dopo chapters: — va riconosciuto
+             * in entrambi i casi, altrimenti le opzioni finiscono nel blocco
+             * capitoli e vengono ignorate in silenzio. */
+            in_toc = 1;
+            in_ch = 0;
         } else if (in_ch && indent == 0 && *l != '-') {
             in_ch = 0;
+            in_toc = 0;
+        } else if (in_toc && indent == 0) {
+            in_toc = 0;
         }
 
         if (in_ch) {
@@ -4192,8 +4710,54 @@ static int load_vault(const char *vdir, Book *bk) {
                 bk->bleed = 1;
             else
                 bk->bleed = 0;
+        } else if (in_toc && indent > 0 && !strncmp(l, "subheads:", 9)) {
+            char *v = l + 9;
+            clean_yaml_val(v);
+            int bv = 0;
+            int st = yaml_bool_parse(v, &bv);
+            if (st < 0) {
+                fprintf(stderr, "errore: toc.subheads non valido ('%s'): usa true/false, "
+                                "yes/no, on/off, 1/0 (vuoto o null = default)\n", v);
+                toc_bad = 1;
+            } else if (st > 0) {
+                bk->toc_subheads = bv;
+            }
+        } else if (in_toc && indent > 0 && !strncmp(l, "pagenumbers:", 12)) {
+            char *v = l + 12;
+            clean_yaml_val(v);
+            int bv = 0;
+            int st = yaml_bool_parse(v, &bv);
+            if (st < 0) {
+                fprintf(stderr, "errore: toc.pagenumbers non valido ('%s'): usa true/false, "
+                                "yes/no, on/off, 1/0 (vuoto o null = default)\n", v);
+                toc_bad = 1;
+            } else if (st > 0) {
+                bk->toc_pagenumbers = bv;
+            }
+        } else if (in_toc && indent > 0) {
+            /* opzione sconosciuta: avvisa e ignora, come la GUI (nessuna
+             * divergenza silenziosa fra CLI e GUI) */
+            char key[48];
+            size_t kn = 0;
+            while (l[kn] && l[kn] != ':' && kn + 1 < sizeof key) {
+                key[kn] = l[kn];
+                kn++;
+            }
+            key[kn] = 0;
+            fprintf(stderr, "avviso: opzione toc sconosciuta '%s' ignorata "
+                            "(supportate: subheads, pagenumbers)\n", key);
         }
         line = strtok(NULL, "\n");
+    }
+    if (toc_bad) {
+        /* un valore toc non valido è un errore di configurazione: la CLI si
+         * ferma con un messaggio esplicito, come fa la GUI. */
+        for (size_t k = 0; k < nen; k++) {
+            free(ents[k].file); free(ents[k].id); free(ents[k].title); free(ents[k].type);
+        }
+        free(ents);
+        free(xy);
+        return 1;
     }
     for (size_t i = 0; i < nen; i++) {
         if (!is_safe_chapter_file(ents[i].file)) {
@@ -4512,6 +5076,7 @@ static int load_vault(const char *vdir, Book *bk) {
     free(ents);
     free(xy);
     if (!bk->nch) { fprintf(stderr, "errore: nessun capitolo nel vault\n"); return -1; }
+    warn_unknown_chapter_types(bk);
     return 0;
 }
 
@@ -4530,6 +5095,9 @@ static int cmd_info_vault(const char *vdir) {
     if (bk.trim) printf("trim:       %s\n", bk.trim);
     if (bk.pages > 0) printf("pages:      %d\n", bk.pages);
     if (bk.bleed) printf("bleed:      %s\n", bk.bleed ? "true" : "false");
+    printf("toc:        subheads=%s pagenumbers=%s\n",
+           bk.toc_subheads ? "true" : "false",
+           bk.toc_pagenumbers ? "true" : "false");
     printf("capitoli:   %zu\n", bk.nch);
     for (size_t i = 0; i < bk.nch; i++) {
         printf("  %zu. file=%s | id=%s | title=%s | type=%s\n",
@@ -4607,12 +5175,16 @@ static void usage(const char *prog) {
         "  %s export-epub <archivio> <out.epub> [--kindle]\n"
         "  %s export-print <archivio> <outdir> [opzioni stampa]\n"
         "opzioni stampa: [--trim 6x9] [--pages N] [--bleed|--no-bleed] [--pdf]\n"
-        "trim KDP: 5x8 5.25x8 5.5x8.5 6x9 7x10 8x10 8.5x8.5 8.5x11\n",
+        "                [--toc-pagemap mappa.json] (numeri di pagina dell'indice)\n"
+        "                [--no-toc-pagenumbers] (indice senza numeri: nessuna sonda)\n"
+        "trim KDP: 5x8 5.25x8 5.5x8.5 6x9 7x10 8x10 8.5x8.5 8.5x11\n"
+        "indice (book.yaml): toc:\n  subheads: true|false (default false)\n  pagenumbers: true|false (default true)\n",
         VERSION, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 static int parse_print_opts(int argc, char **argv, int start,
-                            double *tw, double *th, int *pages, int *bleed, int *want_pdf) {
+                            double *tw, double *th, int *pages, int *bleed, int *want_pdf,
+                            const char **pagemap_path, int *no_toc_numbers) {
     for (int i = start; i < argc; i++) {
         const char *val = NULL;
         char opt[32];
@@ -4623,7 +5195,8 @@ static int parse_print_opts(int argc, char **argv, int start,
             val = eq + 1;
         } else {
             snprintf(opt, sizeof opt, "%s", argv[i]);
-            if ((strcmp(opt, "--trim") == 0 || strcmp(opt, "--pages") == 0) && i + 1 < argc)
+            if ((strcmp(opt, "--trim") == 0 || strcmp(opt, "--pages") == 0 ||
+                 strcmp(opt, "--toc-pagemap") == 0) && i + 1 < argc)
                 val = argv[++i];
         }
         if (!strcmp(opt, "--trim")) {
@@ -4637,6 +5210,13 @@ static int parse_print_opts(int argc, char **argv, int start,
         } else if (!strcmp(argv[i], "--bleed")) *bleed = 1;
         else if (!strcmp(argv[i], "--no-bleed")) *bleed = 0;
         else if (!strcmp(argv[i], "--pdf")) *want_pdf = 1;
+        else if (!strcmp(argv[i], "--no-toc-pagenumbers")) {
+            if (no_toc_numbers) *no_toc_numbers = 1;
+        }
+        else if (!strcmp(opt, "--toc-pagemap")) {
+            if (!val || !val[0]) { fprintf(stderr, "--toc-pagemap richiede un percorso file\n"); return -1; }
+            if (pagemap_path) *pagemap_path = val;
+        }
         else { fprintf(stderr, "opzione sconosciuta: %s\n", argv[i]); return -1; }
     }
     int known = 0;
@@ -4666,7 +5246,8 @@ static int build_epub(const char *vdir, const char *outepub, int kindle) {
     return rc;
 }
 static int build_print(const char *vdir, const char *outdir,
-                       double tw, double th, int pages, int bleed, int want_pdf) {
+                       double tw, double th, int pages, int bleed, int want_pdf,
+                       const char *pagemap_path, int no_toc_numbers) {
     Book bk;
     if (load_vault(vdir, &bk) != 0) return 1;
     if (ensure_book_uuid(vdir, &bk) != 0) return 1;
@@ -4676,7 +5257,8 @@ static int build_print(const char *vdir, const char *outdir,
     char fnd[PATH_MAX];
     snprintf(fnd, sizeof fnd, "%s/fonts", outdir);
     copy_fonts(vdir, fnd);
-    return export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf);
+    return export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf,
+                             pagemap_path, no_toc_numbers);
 }
 
 int main(int argc, char **argv) {
@@ -4721,9 +5303,10 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "export-kindle") && argc == 4) return export_epub_impl(argv[2], argv[3], 1);
     if (!strcmp(argv[1], "export-print") && argc >= 4) {
         double tw = 6, th = 9;
-        int pages = 200, bleed = 0, want_pdf = 0;
-        if (parse_print_opts(argc, argv, 4, &tw, &th, &pages, &bleed, &want_pdf) != 0) return 2;
-        return export_print(argv[2], argv[3], tw, th, pages, bleed, want_pdf);
+        int pages = 200, bleed = 0, want_pdf = 0, no_toc_numbers = 0;
+        if (parse_print_opts(argc, argv, 4, &tw, &th, &pages, &bleed, &want_pdf, NULL,
+                             &no_toc_numbers) != 0) return 2;
+        return export_print(argv[2], argv[3], tw, th, pages, bleed, want_pdf, no_toc_numbers);
     }
     if (!strcmp(argv[1], "export-md") && argc == 4) return export_md(argv[2], argv[3]);
     if (!strcmp(argv[1], "build") && argc >= 4) {
@@ -4736,9 +5319,12 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(argv[1], "build-print") && argc >= 4) {
         double tw = 6, th = 9;
-        int pages = 200, bleed = 0, want_pdf = 0;
-        if (parse_print_opts(argc, argv, 4, &tw, &th, &pages, &bleed, &want_pdf) != 0) return 2;
-        return build_print(argv[2], argv[3], tw, th, pages, bleed, want_pdf);
+        int pages = 200, bleed = 0, want_pdf = 0, no_toc_numbers = 0;
+        const char *pagemap_path = NULL;
+        if (parse_print_opts(argc, argv, 4, &tw, &th, &pages, &bleed, &want_pdf, &pagemap_path,
+                             &no_toc_numbers) != 0) return 2;
+        return build_print(argv[2], argv[3], tw, th, pages, bleed, want_pdf, pagemap_path,
+                           no_toc_numbers);
     }
     usage(argv[0]);
     return 2;

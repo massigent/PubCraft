@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
+const { trackGui, stopGui, releaseBrowser } = require('./cleanup.cjs');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
@@ -31,6 +32,7 @@ const { spawn } = require('child_process');
     env: { ...process.env, PUBCRAFTGUI_LISTEN: `127.0.0.1:${port}`, PUBCRAFTGUI_NO_BROWSER: '1' },
     stdio: 'ignore',
   });
+  trackGui(guiProc);
 
   let ready = false;
   for (let i = 0; i < 80; i++) {
@@ -176,14 +178,8 @@ const { spawn } = require('child_process');
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.disconnect().catch(() => {});
-    if (guiProc) {
-      await new Promise(resolve => {
-        guiProc.on('exit', resolve);
-        guiProc.kill();
-        setTimeout(resolve, 2000);
-      });
-    }
+    await releaseBrowser(browser);
+    await stopGui(guiProc);
   }
   process.exit(0);
 })();

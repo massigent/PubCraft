@@ -9,9 +9,15 @@ PubCraft è gratuito e open source: editor locale nel browser, compilatore CLI i
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
 [![Licenza MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Ultima versione: 1.0.0-alpha.5 — app Mac universale, nativa su Intel e Apple Silicon.**
+**Ultima versione pubblicata: 1.0.0-alpha.5 — app Mac universale, nativa su Intel e Apple Silicon.**
 
-### Download
+> **In preparazione — 1.0.0-alpha.6 (candidata, NON ancora pubblicata):** questo ramo di
+> sviluppo contiene i sorgenti e la documentazione della prossima alfa 6. Non è ancora una
+> release: nessun download, tag o pacchetto esiste per la alfa 6 finché non completa il
+> ciclo di validazione. Continuate a usare i download alfa 5 qui sotto; restano la versione
+> pubblicata più recente.
+
+### Download (pubblicata: 1.0.0-alpha.5)
 
 | Sistema | Download |
 | --- | --- |
@@ -39,11 +45,15 @@ L'app ha una firma ad-hoc, non una firma Developer ID/notarizzazione Apple; PKG 
 
 ## Novità
 
+**Alfa 6 (in preparazione, candidata):** stabilità rafforzata. Politica coerente per i tipi di sezione nelle tre varianti di indice (stampa, nav.xhtml EPUB e toc.ncx: matrice di inclusione per formato, sottocapi opt-in, tipi sconosciuti segnalati con avviso e impaginati come capitoli normali), parità CLI/GUI/`book.yaml` nel caricamento e nella validazione dei booleani `toc:`, cache delle pagine dell'indice PDF legata all'ambiente di rendering (un ambiente cambiato non riutilizza numeri di pagina obsoleti) e una guardia di pubblicazione: un build PDF candidato fallito lascia intatto il PDF pubblicato precedente. L'anteprima di pubblicazione avvisa quando i file sorgente sono cambiati dall'ultimo render. La suite dei test del browser è stata consolidata in 19 runner con un passaggio di igiene dei test; il tool AppImage è fissato a appimagetool 1.9.1.
+
+**Incluse dall'alfa 5:** trascinamento libero della Lavagna e sincronizzazione non distruttiva cartella ↔ `book.yaml`.
+
 **Alfa 4:** ripristinato e potenziato il riordino dei capitoli su tutte le viste. Frecce su/giù immediate nell'elenco capitoli della barra laterale; frecce avanti/indietro e drag-and-drop fluido nella Lavagna a Schede (Corkboard), senza salti accidentali nell'editor e con sincronizzazione istantanea su `book.yaml`.
 
 **Incluse dall'alfa 3:** `PubCraft.app` e strumenti Mac Universal 2 (Intel + Apple Silicon nativo, senza Rosetta, macOS 13+ minimo).
 
-Consulta [note alfa 5](RELEASE_NOTES_1.0.0-alpha.5.md), [note alfa 4](RELEASE_NOTES_1.0.0-alpha.4.md), [note alfa 3](RELEASE_NOTES_1.0.0-alpha.3.md), [modifiche complete alfa 2](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md) e [validazione](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
+Consulta [note alfa 6 in preparazione](RELEASE_NOTES_1.0.0-alpha.6.md) (candidata, non ancora pubblicata), [note alfa 5](RELEASE_NOTES_1.0.0-alpha.5.md), [note alfa 4](RELEASE_NOTES_1.0.0-alpha.4.md), [note alfa 3](RELEASE_NOTES_1.0.0-alpha.3.md), [modifiche complete alfa 2](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md), [validazione alfa 6](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md) e [validazione alfa 5](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
 
 ## Perché PubCraft?
 
@@ -51,7 +61,21 @@ Consulta [note alfa 5](RELEASE_NOTES_1.0.0-alpha.5.md), [note alfa 4](RELEASE_NO
 - **Lavoro locale:** nessun account/backend cloud PubCraft. Eventuali client AI esterni collegati tramite MCP hanno le proprie politiche di riservatezza.
 - **Importazioni:** Vellum, Scrivener, DOCX, ODT, Markdown e PDF. La conversione non riproduce perfettamente ogni caratteristica originale: verifica il risultato.
 - **Scrittura e pubblicazione:** capitoli, note, anteprima del manoscritto, tipografia e anteprime reali EPUB/PDF generate su richiesta.
-- **Stampa:** HTML/PDF con formato e abbondanza; serve un renderer supportato e la resa può variare.
+- **Stampa:** HTML/PDF con formato e abbondanza; serve un renderer supportato e la resa può variare. Il PDF prodotto viene controllato pagina per pagina rispetto al formato richiesto (trim più abbondanza, ±1 punto tipografico): un motore che ignora `@page size` (snapshot non impaginato a pagina unica) fa fallire la build con un messaggio esplicito invece di pubblicare il file, e la cache dei numeri di pagina resta invariata.
+- **Indice automatico:** generato in EPUB (nav.xhtml gerarchico + toc.ncx), nell'export HTML e nell'indice della versione stampata con numeri di pagina calcolati sul PDF reale. Sottocapi e numeri si configurano in `book.yaml`:
+
+  ```yaml
+  toc:
+    subheads: true       # sottocapi (h3) annidati nell'indice (default: false)
+    pagenumbers: false   # numeri di pagina nell'indice di stampa (default: true)
+  ```
+
+  I booleani accettano `true/false`, `yes/no`, `on/off` e `1/0`; un valore vuoto, `~` o `null` lascia il default, un valore non valido è un errore esplicito sia in GUI sia in CLI. Le voci dell'indice rendono corsivo e grassetto in HTML, stampa e navigazione EPUB (i link restano testo, senza link annidati) e testo puro in `toc.ncx`.
+
+  I valori di `type:` sono stringhe di tipo di sezione: `chapter`, `dedication`, `epigraph`, `copyright`, `colophon` (alias di `copyright`), `about-author`, `acknowledgments`, `prologue`, `epilogue`, `preface`. La stessa tabella di politica governa tutti e tre gli indici: in stampa dedication, epigraph e copyright/colophon sono frontmatter e restano fuori dall'indice, mentre compaiono in nav.xhtml e toc.ncx dell'EPUB. I sottocapi sono opt-in (`toc.subheads`, default falso). Un tipo sconosciuto produce un avviso e viene impaginato come capitolo normale; il valore in `book.yaml` non viene mai riscritto.
+
+  L'anteprima pubblicazione mostra i numeri solo quando una build di stampa ha già messo in cache la mappa delle pagine; finché non esiste, l'indice dell'anteprima resta senza numeri per non raddoppiare i tempi di render.
+
 - **Gratuito e open source:** codice MIT; font/dipendenze conservano le rispettive licenze.
 
 ## Iniziare

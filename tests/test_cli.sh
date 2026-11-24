@@ -388,6 +388,254 @@ if [ "$REMAINING_CONTENT" != "MANUSCRITTO_DA_PROTEGGERE" ]; then
 fi
 echo "  ✔ pubcraft init ha bloccato la sovrascrittura del manoscritto restituendo codice d'uscita diverso da 0."
 
+# -----------------------------------------------------------------------------
+# Test 12: indice automatico — config `toc:` dopo `chapters:` e --no-toc-pagenumbers
+# -----------------------------------------------------------------------------
+echo "[Test 12] Verifica indice automatico (toc: dopo chapters, sottocapi, flag numeri)..."
+mkdir -p "$TMP_DIR/v12"
+cat <<EOF > "$TMP_DIR/v12/book.yaml"
+title: "Indice Test"
+author: "Autore"
+language: "it"
+chapters:
+  - file: "01.md"
+    id: "c1"
+    title: "Capitolo Uno"
+toc:
+  subheads: true
+  pagenumbers: false
+EOF
+cat <<EOF > "$TMP_DIR/v12/01.md"
+Testo introduttivo.
+
+## Prima Sezione
+
+Altro testo.
+
+## Seconda Sezione
+
+Fine.
+EOF
+# il blocco toc: sta dopo chapters: — prima veniva ignorato in silenzio
+INFO_OUT=$("$BIN" info "$TMP_DIR/v12")
+case "$INFO_OUT" in
+    *"toc:        subheads=true pagenumbers=false"*) ;;
+    *)
+        echo "FALLITO: opzioni toc: dopo chapters: non applicate." >&2
+        echo "$INFO_OUT" >&2
+        exit 1
+        ;;
+esac
+"$BIN" build-print "$TMP_DIR/v12" "$TMP_DIR/v12/out" --trim 6x9 --pages 100 >/dev/null
+if ! grep -q 'href="#ch1-s1"' "$TMP_DIR/v12/out/print.html"; then
+    echo "FALLITO: i sottocapi non compaiono nell'indice di stampa." >&2
+    exit 1
+fi
+if grep -q 'class="toc-list"' "$TMP_DIR/v12/out/print.html"; then
+    echo "FALLITO: indice con numeri di pagina nonostante toc.pagenumbers=false (find: class=\"toc-list\" presente)." >&2
+    exit 1
+fi
+# --no-toc-pagenumbers: nessun marcatore nascosto, indice senza numeri
+cat <<EOF > "$TMP_DIR/v12/book.yaml"
+title: "Indice Test"
+author: "Autore"
+language: "it"
+toc:
+  subheads: true
+chapters:
+  - file: "01.md"
+    id: "c1"
+    title: "Capitolo Uno"
+EOF
+"$BIN" build-print "$TMP_DIR/v12" "$TMP_DIR/v12/out2" --trim 6x9 --pages 100 --no-toc-pagenumbers >/dev/null
+if grep -q 'PCMAP-' "$TMP_DIR/v12/out2/print.html"; then
+    echo "FALLITO: --no-toc-pagenumbers ha comunque emesso i marcatori nascosti." >&2
+    exit 1
+fi
+if grep -q '<div class="toc-p">' "$TMP_DIR/v12/out2/print.html"; then
+    echo "FALLITO: --no-toc-pagenumbers ha comunque emesso la colonna dei numeri." >&2
+    exit 1
+fi
+echo "  ✔ toc: applicato anche dopo chapters:, sottocapi nell'indice e --no-toc-pagenumbers senza marcatori."
+
+# -----------------------------------------------------------------------------
+# Test 13: tipi editoriali — colophon come alias di copyright, tipi sconosciuti
+# -----------------------------------------------------------------------------
+echo "[Test 13] Verifica tipo colophon (alias copyright) e tipi sconosciuti..."
+mkdir -p "$TMP_DIR/v13"
+cat <<EOF > "$TMP_DIR/v13/book.yaml"
+title: "Tipi"
+author: "Autore"
+language: "it"
+chapters:
+  - file: "copy.md"
+    id: "copy"
+    title: "Copyright"
+    type: "copyright"
+  - file: "col.md"
+    id: "col"
+    title: "Colophon"
+    type: "colophon"
+  - file: "c1.md"
+    id: "c1"
+    title: "Capitolo Uno"
+    type: "chapter"
+  - file: "odd.md"
+    id: "odd"
+    title: "Strano"
+    type: "parties"
+EOF
+printf 'Copyright 2026.\n' > "$TMP_DIR/v13/copy.md"
+printf 'Prodotto con PubCraft.\n' > "$TMP_DIR/v13/col.md"
+printf 'Testo del capitolo.\n' > "$TMP_DIR/v13/c1.md"
+printf 'Contenuto con tipo non riconosciuto.\n' > "$TMP_DIR/v13/odd.md"
+
+set +e
+"$BIN" build-print "$TMP_DIR/v13" "$TMP_DIR/v13/out" --trim 6x9 --pages 100 >"$TMP_DIR/v13/print.log" 2>"$TMP_DIR/v13/print.err"
+RC_TYPES=$?
+set -e
+if [ "$RC_TYPES" -ne 0 ]; then
+    echo "FALLITO: un tipo sconosciuto non deve interrompere la build." >&2
+    cat "$TMP_DIR/v13/print.err" >&2
+    exit 1
+fi
+if ! grep -q "tipo di sezione 'parties' non riconosciuto" "$TMP_DIR/v13/print.err"; then
+    echo "FALLITO: manca l'avviso sul tipo sconosciuto 'parties'." >&2
+    cat "$TMP_DIR/v13/print.err" >&2
+    exit 1
+fi
+# il capolettera spezza la prima lettera: cerca il resto della frase
+if ! grep -q 'on tenuto con tipo non riconosciuto\|on<span class="dropcap">.*</span>tenuto con tipo non riconosciuto\|tenuto con tipo non riconosciuto' "$TMP_DIR/v13/out/print.html"; then
+    echo "FALLITO: il contenuto del capitolo con tipo sconosciuto è stato perso." >&2
+    exit 1
+fi
+# colophon = alias di copyright: fuori dall'indice stampato, nessun titolo di capitolo
+if grep -q 'href="#ch2">Colophon' "$TMP_DIR/v13/out/print.html"; then
+    echo "FALLITO: il colophon compare nell'indice stampato (dovrebbe essere frontmatter come copyright)." >&2
+    exit 1
+fi
+if grep -q '<h2>Colophon</h2>' "$TMP_DIR/v13/out/print.html"; then
+    echo "FALLITO: il colophon ha un titolo di capitolo in stampa." >&2
+    exit 1
+fi
+if ! grep -q 'id="ch4">.*Strano\|<h2>Strano</h2>' "$TMP_DIR/v13/out/print.html"; then
+    echo "FALLITO: il capitolo con tipo sconosciuto non è impaginato come capitolo normale." >&2
+    exit 1
+fi
+# EPUB: il colophon resta presente nel libro (contenuto intatto)
+"$BIN" build "$TMP_DIR/v13" "$TMP_DIR/v13/out.epub" >/dev/null
+unzip -p "$TMP_DIR/v13/out.epub" OEBPS/chap002.xhtml | grep -q 'rodotto con PubCraft' \
+    || { echo "FALLITO: il colophon non è presente nell'EPUB." >&2; exit 1; }
+# alias: nell'EPUB copyright e colophon ricevono lo stesso trattamento (nessuno
+# dei due è speciale fuori dalla stampa)
+unzip -p "$TMP_DIR/v13/out.epub" OEBPS/chap001.xhtml | grep -q '<h2>Copyright</h2>' \
+    || { echo "FALLITO: regressione sul trattamento EPUB di copyright." >&2; exit 1; }
+unzip -p "$TMP_DIR/v13/out.epub" OEBPS/chap002.xhtml | grep -q '<h2>Colophon</h2>' \
+    || { echo "FALLITO: colophon e copyright non ricevono lo stesso trattamento EPUB." >&2; exit 1; }
+echo "  ✔ colophon trattato come copyright (fuori indice stampa, contenuto intatto) e tipo sconosciuto segnalato senza bloccare."
+
+# -----------------------------------------------------------------------------
+# Test 14: Markdown nelle voci dell'indice (HTML, stampa, nav EPUB, NCX)
+# -----------------------------------------------------------------------------
+echo "[Test 14] Verifica resa inline delle voci d'indice e testo puro nell'NCX..."
+mkdir -p "$TMP_DIR/v14"
+cat <<EOF > "$TMP_DIR/v14/book.yaml"
+title: "Indice Inline"
+author: "Autore"
+language: "it"
+toc:
+  subheads: on
+  pagenumbers: off
+chapters:
+  - file: "c1.md"
+    id: "c1"
+    title: "Capitolo & Uno"
+    type: "chapter"
+EOF
+cat <<'EOF' > "$TMP_DIR/v14/c1.md"
+Testo.
+
+## Sezione con *corsivo* & "virgolette" <tag>
+
+Altro testo.
+
+## Sezione con [link](https://example.com) e **grassetto**
+EOF
+"$BIN" build-print "$TMP_DIR/v14" "$TMP_DIR/v14/out" --trim 6x9 --pages 100 >/dev/null
+"$BIN" build "$TMP_DIR/v14" "$TMP_DIR/v14/out.epub" >/dev/null
+# stampa: corsivo reso, niente delimitatori, escaping corretto
+grep -q '<em>corsivo</em>' "$TMP_DIR/v14/out/print.html" \
+    || { echo "FALLITO: il corsivo non è reso nell'indice di stampa." >&2; exit 1; }
+grep -q '&amp; &quot;virgolette&quot; &lt;tag&gt;' "$TMP_DIR/v14/out/print.html" \
+    || { echo "FALLITO: escaping errato nell'indice di stampa." >&2; exit 1; }
+grep -q '\*corsivo\*' "$TMP_DIR/v14/out/print.html" \
+    && { echo "FALLITO: delimitatori Markdown visibili nell'indice di stampa." >&2; exit 1; }
+# nessun link annidato nella voce d'indice: il titolo del link resta testo
+if grep -q 'class="toc"' "$TMP_DIR/v14/out/print.html"; then
+    TOC_FRAG=$(sed -n '/class="toc"/,/<\/div>$/p' "$TMP_DIR/v14/out/print.html")
+    printf '%s' "$TOC_FRAG" | grep -q 'https://example.com' \
+        && { echo "FALLITO: link annidato nell'indice di stampa." >&2; exit 1; }
+fi
+grep -q '<strong>grassetto</strong>' "$TMP_DIR/v14/out/print.html" \
+    || { echo "FALLITO: il grassetto non è reso nell'indice." >&2; exit 1; }
+# nav EPUB: resa inline, niente link annidati
+unzip -p "$TMP_DIR/v14/out.epub" OEBPS/nav.xhtml > "$TMP_DIR/v14/nav.xhtml"
+grep -q '<em>corsivo</em>' "$TMP_DIR/v14/nav.xhtml" \
+    || { echo "FALLITO: il corsivo non è reso nella nav EPUB." >&2; exit 1; }
+grep -q 'https://example.com' "$TMP_DIR/v14/nav.xhtml" \
+    && { echo "FALLITO: link annidato nella nav EPUB." >&2; exit 1; }
+# NCX: testo puro, senza delimitatori né tag
+unzip -p "$TMP_DIR/v14/out.epub" OEBPS/toc.ncx > "$TMP_DIR/v14/toc.ncx"
+grep -q 'Sezione con corsivo &amp; &quot;virgolette&quot; &lt;tag&gt;' "$TMP_DIR/v14/toc.ncx" \
+    || { echo "FALLITO: testo NCX non normalizzato: $(grep -o 'Sezione[^<]*' "$TMP_DIR/v14/toc.ncx" | head -2 | tr '\n' '|')" >&2; exit 1; }
+grep -qE '\*|<em>|<strong>' "$TMP_DIR/v14/toc.ncx" \
+    && { echo "FALLITO: l'NCX contiene delimitatori Markdown o tag." >&2; exit 1; }
+echo "  ✔ voci d'indice con resa inline (stampa, EPUB nav) e testo puro nell'NCX."
+
+# -----------------------------------------------------------------------------
+# Test 15: valori booleani di toc: (on/off, null, non valido)
+# -----------------------------------------------------------------------------
+echo "[Test 15] Verifica valori booleani di toc: in book.yaml..."
+mkdir -p "$TMP_DIR/v15"
+printf 'Testo.\n\n## Sezione\n' > "$TMP_DIR/v15/c1.md"
+cat <<EOF > "$TMP_DIR/v15/book.yaml"
+title: "Bool"
+author: "Autore"
+language: "it"
+toc:
+  subheads: on
+  pagenumbers: null
+chapters:
+  - file: "c1.md"
+    id: "c1"
+    title: "Uno"
+EOF
+"$BIN" build-print "$TMP_DIR/v15" "$TMP_DIR/v15/out" --trim 6x9 --pages 100 >/dev/null
+grep -q 'href="#ch1-s1"' "$TMP_DIR/v15/out/print.html" \
+    || { echo "FALLITO: subheads: on non applicato." >&2; exit 1; }
+cat <<EOF > "$TMP_DIR/v15/book.yaml"
+title: "Bool"
+author: "Autore"
+language: "it"
+toc:
+  subheads: forse
+chapters:
+  - file: "c1.md"
+    id: "c1"
+    title: "Uno"
+EOF
+set +e
+"$BIN" build-print "$TMP_DIR/v15" "$TMP_DIR/v15/out-bad" --trim 6x9 --pages 100 >/dev/null 2>"$TMP_DIR/v15/bad.err"
+RC_BAD=$?
+set -e
+if [ "$RC_BAD" -eq 0 ]; then
+    echo "FALLITO: un valore toc non valido deve interrompere la build." >&2
+    exit 1
+fi
+grep -q "toc.subheads non valido" "$TMP_DIR/v15/bad.err" \
+    || { echo "FALLITO: messaggio d'errore assente o poco chiaro." >&2; cat "$TMP_DIR/v15/bad.err" >&2; exit 1; }
+echo "  ✔ on/off e null accettati, valore non valido rifiutato con messaggio esplicito."
+
 echo "=========================================================="
 echo " TUTTI I TEST DELLA CLI PUBCRAFT SONO STATI SUPERATI CON SUCCESSO! "
 echo "=========================================================="
