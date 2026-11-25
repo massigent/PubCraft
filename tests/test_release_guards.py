@@ -31,24 +31,85 @@ def fat(cpus):
 
 
 class LinuxStaticElfGuard(unittest.TestCase):
-    def test_dynamic_binary_is_rejected(self):
-        # Any dynamically linked system binary must fail the guard.
-        dynamic = Path('/bin/true')
-        if not dynamic.is_file() or not dynamic.read_bytes()[:4] == b'\x7fELF':
-            self.skipTest('no dynamic ELF system binary available')
-        with self.assertRaises(SystemExit):
-            check_static(dynamic, 'amd64')
+    """Platform-independent unit tests: synthetic ELF fixtures plus a mocked
+    readelf. The real readelf check runs on the actual release executables in
+    the packaging workflow; here we only verify the fail-closed logic."""
 
-    @unittest.skipUnless(__import__('shutil').which('gcc'), 'gcc not available')
+    STATIC_HEAD = ('ELF Header:\n  Machine: Advanced Micro Devices X86-64\n')
+    STATIC_HEADERS = ('Program Headers:\n  LOAD           0x000000 0x000000\n')
+    STATIC_DYNAMIC = 'Dynamic Section:\n\n'
+    ARM_HEAD = 'ELF Header:\n  Machine: AArch64\n'
+    INTERP_HEADERS = ('Program Headers:\n  INTERP         0x000000 [libc.so]\n'
+                      '  LOAD           0x000000 0x000000\n')
+    NEEDED_DYNAMIC = 'Dynamic Section:\n  NEEDED       Shared library: [libc.so]\n'
+
+    def elf(self, tmp, name='bin', payload=b'payload'):
+        path = Path(tmp) / name
+        path.write_bytes(b'\x7fELF' + payload)
+        return path
+
+    def guard(self, elf_path, outputs):
+        """Run check_static with readelf outputs selected by the flag used.
+        Any unexpected flag or a nonzero returncode fails the test."""
+        import check_linux_static_elf as guard_mod
+
+        def fake_run(cmd, **kwargs):
+            flags = [a for a in cmd[1:] if a.startswith('-')]
+            out = outputs.get(' '.join(flags))
+            if out is None:
+                raise AssertionError(f'unexpected readelf invocation: {cmd}')
+            return SimpleNamespace(returncode=0, stdout=out, stderr='')
+
+        with patch.object(guard_mod.subprocess, 'run', fake_run):
+            return check_static(elf_path, 'amd64')
+
+    def static_outputs(self, head=STATIC_HEAD):
+        return {'-h': head, '-l': self.STATIC_HEADERS, '-d': self.STATIC_DYNAMIC}
+
     def test_static_binary_is_accepted(self):
-        import shutil, subprocess
         with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / 't.c'
-            source.write_text('int main(void){return 0;}\n')
-            binary = Path(tmp) / 't'
-            subprocess.run(['gcc', '-static', '-nostdlib', '-no-pie', str(source),
-                            '-o', str(binary)], check=True)
-            check_static(binary, 'amd64')
+            self.assertIsNone(self.guard(self.elf(tmp), self.static_outputs()))
+
+    def test_dynamic_pt_interp_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = self.static_outputs()
+            outputs['-l'] = self.INTERP_HEADERS
+            with self.assertRaises(SystemExit):
+                self.guard(self.elf(tmp), outputs)
+
+    def test_dt_needed_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = self.static_outputs()
+            outputs['-d'] = self.NEEDED_DYNAMIC
+            with self.assertRaises(SystemExit):
+                self.guard(self.elf(tmp), outputs)
+
+    def test_wrong_machine_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = self.static_outputs(head=self.ARM_HEAD)
+            with self.assertRaises(SystemExit):
+                self.guard(self.elf(tmp), outputs)
+
+    def test_readelf_failure_fails_closed(self):
+        import check_linux_static_elf as guard_mod
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = self.elf(tmp)
+            with patch.object(guard_mod.subprocess, 'run',
+                              return_value=SimpleNamespace(returncode=1, stdout='', stderr='boom')):
+                with self.assertRaises(SystemExit):
+                    check_static(binary, 'amd64')
+
+    def test_non_elf_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'script'
+            path.write_text('#!/bin/sh\ntrue\n', encoding='utf-8')
+            with self.assertRaises(SystemExit):
+                check_static(path, 'amd64')
+
+    def test_missing_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit):
+                check_static(Path(tmp) / 'absent', 'amd64')
 
 
 class ArchitectureGuards(unittest.TestCase):
