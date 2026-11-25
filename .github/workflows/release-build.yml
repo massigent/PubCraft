@@ -24,12 +24,19 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y musl-tools zip unzip squashfs-tools libglib2.0-0
       - name: Compile and test actual release binaries
         run: |
-          make all CC=musl-gcc CFLAGS='-std=c11 -Wall -Wextra -O2 -static'
+          # CGO_ENABLED=0 applies ONLY to the release build: the GUI must be a
+          # fully static ELF (no musl PT_INTERP/DT_NEEDED). Go tests below run
+          # with the default environment because -race requires CGO.
+          CGO_ENABLED=0 make all CC=musl-gcc CFLAGS='-std=c11 -Wall -Wextra -O2 -static'
           bash tests/test_cli.sh build/pubcraft
           go -C src/pubcraftgui test -race -count=1 ./...
           go -C src/pubcraftgui vet ./...
           cp build/pubcraft build/pubcraft-linux-amd64
           cp build/pubcraftgui build/pubcraftgui-linux-amd64
+          # Fail-closed portability guard BEFORE any smoke test or packaging:
+          # both Linux executables must be fully static ELF.
+          python3 tests/check_linux_static_elf.py --arch amd64 \
+            build/pubcraft-linux-amd64 build/pubcraftgui-linux-amd64
           python3 scripts/smoke_release.py --cli build/pubcraft-linux-amd64 --gui build/pubcraftgui-linux-amd64
       - name: Download and verify packaging tools
         run: |
@@ -47,6 +54,8 @@ jobs:
           python3 tests/check_packages.py "build/PubCraft-$(cat VERSION)-linux-x64.tar.gz"
           mkdir "$RUNNER_TEMP/unpacked"
           tar -xzf "build/PubCraft-$(cat VERSION)-linux-x64.tar.gz" -C "$RUNNER_TEMP/unpacked"
+          python3 tests/check_linux_static_elf.py --arch amd64 \
+            "$RUNNER_TEMP/unpacked/pubcraft" "$RUNNER_TEMP/unpacked/pubcraftgui"
           python3 scripts/smoke_release.py --cli "$RUNNER_TEMP/unpacked/pubcraft" --gui "$RUNNER_TEMP/unpacked/pubcraftgui"
           dpkg-deb --info "build/PubCraft-$(cat VERSION)-linux-amd64.deb"
           dpkg-deb -x "build/PubCraft-$(cat VERSION)-linux-amd64.deb" "$RUNNER_TEMP/deb"

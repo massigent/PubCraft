@@ -27,6 +27,19 @@ PubCraft is pre-release software. Entries describe changes relative to the previ
   shared cleanup helper (`tests/cleanup.cjs`).
 - **AppImage tooling:** appimagetool is pinned to release 1.9.1 in the build
   workflow.
+- **Linux static-ELF portability fix:** the Linux release build now compiles
+  the GUI with `CGO_ENABLED=0` (scoped to the `make all` release command, not
+  to the `go test -race` step, which requires CGO). Both Linux executables
+  (CLI and GUI) are fully static ELF with no ELF interpreter and no
+  `DT_NEEDED` dependencies; a fail-closed `tests/check_linux_static_elf.py`
+  guard (checked `readelf` calls) verifies this before any smoke test or
+  packaging, in the build job and again on the unpacked portable archive.
+  Linux CLI and GUI run without any musl loader or additional runtime; the
+  optional `zip`/`unzip` helpers and a browser runtime for PDF export remain
+  external requirements.
+- **Validation record amendment:** the earlier Linux CI run on `34f309e` is
+  reclassified as a preflight; the final asset manifest of the published
+  release is authoritative.
 
 ### Honest status
 

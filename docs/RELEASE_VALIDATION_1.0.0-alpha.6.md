@@ -38,9 +38,20 @@ Compiler `snprintf` format-truncation warnings in the C sources are known non-fa
 - The SHA-256 checksum manifest for every downloadable package accompanies the release assets together with this validation record; the manifest never includes its own digest.
 - Digests of final release assets are verified remotely against local files before/after publication; no hash of this record's own commit is derived or guessed — the record cites the existing CI `head_sha` (`34f309e…`).
 
+## Amendment — Linux static-ELF portability fix (supersedes the Linux preflight above)
+
+A pre-publication review blocked alpha.6: in the Linux job of run [45497549137](https://github.com/massigent/PubCraft/actions/runs/45497549137), `make all CC=musl-gcc` built the Go GUI with CGO enabled, producing a dynamically linked ELF (`PT_INTERP /lib/ld-musl-x86_64.so.1`, musl `DT_NEEDED`) that cannot run on stock Debian/Ubuntu hosts.
+
+- **Fix:** the release workflow now applies `CGO_ENABLED=0` **only** to the Linux `make all` release command (the `go test -race` step keeps its default environment because `-race` requires CGO); the CLI stays built with `-static`.
+- **New fail-closed guard:** `tests/check_linux_static_elf.py` (checked `readelf` subprocess calls, assert-based, no masking pipes) rejects any Linux release executable with `PT_INTERP` or `DT_NEEDED` and verifies the ELF machine type; it runs before any smoke test or packaging, on the freshly built binaries and again on the unpacked portable archive.
+- **Reclassification:** the Linux job of run [45497549137](https://github.com/massigent/PubCraft/actions/runs/45497549137) (and any artifacts built from `51f48a6` or earlier with the dynamic GUI) is a **preflight**, not final validation. The uploaded artifacts of that run are invalidated for publication.
+- **Authoritative record:** final validation for alpha.6 is the first full workflow run on the fixed revision; its uploaded SHA-256 manifest of final assets is authoritative. This record does **not** claim that the earlier packages are portable.
+- The macOS architecture/signature guards, minimum-OS policy and native macOS jobs were not modified.
+
 ## Not yet done for alpha.6 (next cycle steps)
 
 - Annotated tag `v1.0.0-alpha.6`, draft release creation with assets, remote digest verification and publication — not started as of this record.
+- A fresh full workflow run on the fixed revision (with the Linux static-ELF guard green) is required before any draft/publication step.
 
 ## Honest limitations
 

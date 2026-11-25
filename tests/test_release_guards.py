@@ -7,10 +7,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from macos_arch import architectures, require_universal
 from check_macos_universal import deployment_versions
 from check_release_version import validate
+from check_linux_static_elf import check_static
 
 
 def thin(cpu):
@@ -26,6 +28,27 @@ def fat(cpus):
         offset += len(data)
         slices += data
     return struct.pack(">II", 0xCAFEBABE, len(cpus)) + table + slices
+
+
+class LinuxStaticElfGuard(unittest.TestCase):
+    def test_dynamic_binary_is_rejected(self):
+        # Any dynamically linked system binary must fail the guard.
+        dynamic = Path('/bin/true')
+        if not dynamic.is_file() or not dynamic.read_bytes()[:4] == b'\x7fELF':
+            self.skipTest('no dynamic ELF system binary available')
+        with self.assertRaises(SystemExit):
+            check_static(dynamic, 'amd64')
+
+    @unittest.skipUnless(__import__('shutil').which('gcc'), 'gcc not available')
+    def test_static_binary_is_accepted(self):
+        import shutil, subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 't.c'
+            source.write_text('int main(void){return 0;}\n')
+            binary = Path(tmp) / 't'
+            subprocess.run(['gcc', '-static', '-nostdlib', '-no-pie', str(source),
+                            '-o', str(binary)], check=True)
+            check_static(binary, 'amd64')
 
 
 class ArchitectureGuards(unittest.TestCase):
