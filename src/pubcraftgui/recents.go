@@ -80,6 +80,25 @@ func saveUserConfigUnlocked(cfg UserConfig) error {
 	return os.Rename(tmp, p)
 }
 
+// isInsideSystemTempDir indica se p sta dentro la directory temporanea di
+// sistema: copre le cartelle usa-e-getta dei test automatici (su macOS
+// os.TempDir() è /var/folders/.../T/) senza escludere vault reali altrove.
+func isInsideSystemTempDir(p string) bool {
+	tmp, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return false
+	}
+	cand, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(tmp), filepath.Clean(cand))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
 func recordRecentProject(vaultPath string) {
 	if vaultPath == "" {
 		return
@@ -91,11 +110,7 @@ func recordRecentProject(vaultPath string) {
 
 	// Ignora cartelle temporanee create durante i test automatici quando siamo nella cartella utente reale
 	if os.Getenv("PUBCRAFT_CONFIG_DIR") == "" {
-		if os.Getenv("PUBCRAFT_TESTING") == "1" ||
-			strings.Contains(clean, "/var/folders/") ||
-			strings.Contains(clean, "pubcraft-tests-") ||
-			strings.Contains(clean, "pubcraft-focus-") ||
-			(strings.Contains(clean, "Test") && strings.Contains(clean, "/T/")) {
+		if os.Getenv("PUBCRAFT_TESTING") == "1" || isInsideSystemTempDir(clean) {
 			return
 		}
 	}

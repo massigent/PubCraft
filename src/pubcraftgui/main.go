@@ -3270,6 +3270,15 @@ func apiReorder(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "Richiesta non valida")
 		return
 	}
+	// Allineamento al progetto corrente, come apiSave: il frontend invia
+	// X-PubCraft-Vault per tutte le mutation. Senza header si procede
+	// (compatibilità con client non-GUI).
+	if hv := r.Header.Get("X-PubCraft-Vault"); hv != "" {
+		if filepath.Clean(hv) != filepath.Clean(getVaultDir()) {
+			jsonErrWithDiag(w, 409, "Vault disallineato: richiesta per altro progetto rifiutata", "reorder", "BOOK_CHANGED", "apiReorder")
+			return
+		}
+	}
 	b := loadBook()
 	if b == nil {
 		jsonErr(w, 400, "Nessun libro aperto")
@@ -3527,8 +3536,12 @@ func apiBuild(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// Budget per le invocazioni della CLI pubcraft: i libri grandi con molte
+// immagini possono superare i due minuti su dischi lenti.
+var runToolTimeout = 5 * time.Minute
+
 func runTool(c *exec.Cmd) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runToolTimeout)
 	defer cancel()
 	cmdWithCtx := exec.CommandContext(ctx, c.Path, c.Args[1:]...)
 	cmdWithCtx.Dir = c.Dir
@@ -6640,6 +6653,8 @@ func securityMiddleware(next http.Handler) http.Handler {
 			"/api/forget-chapter",
 			"/api/settitle", "/api/setchaptertitle", "/api/note", "/api/delnote", "/api/note-to-chapter",
 			"/api/build", "/api/obsidian", "/api/openpath", "/api/opencover", "/api/reveal",
+			"/api/publication-preview", "/api/recents/remove", "/api/recents/clear",
+			"/api/recents/prune", "/api/workspace",
 		}
 		isMutating := false
 		for _, p := range mutatingPrefixes {
@@ -6665,7 +6680,23 @@ func securityMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// 4. Header protettivi
+		// 4. Unica GET con effetti collaterali: la rigenerazione PDF. Le
+		// richieste cross-site via <img> non portano Origin, quindi si usa
+		// Sec-Fetch-Site. Se l'header manca (browser molto vecchi o client
+		// non-browser) si consente: la protezione attiva richiede un browser
+		// recente che invii Sec-Fetch-Site.
+		if r.Method == http.MethodGet && r.URL.Path == "/api/watch/pdf" && r.URL.Query().Get("rebuild") == "1" {
+			if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+				switch site {
+				case "same-origin", "same-site", "none":
+				default:
+					http.Error(w, "Accesso rifiutato: richiesta cross-site non consentita per la rigenerazione", http.StatusForbidden)
+					return
+				}
+			}
+		}
+
+		// 5. Header protettivi
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 
