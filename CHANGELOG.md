@@ -2,7 +2,7 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
-## [Unreleased]
+## [1.0.0-alpha.7]
 
 ### Fixed — CLI (`src/pubcraft.c`)
 

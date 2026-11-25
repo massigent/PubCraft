@@ -9,19 +9,19 @@ PubCraft is a free, open-source writing and publishing tool with a local browser
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Latest pre-release: 1.0.0-alpha.6 — stability update. Alpha software, not a stable release.**
+**Latest pre-release: 1.0.0-alpha.7 — robustness update. Alpha software, not a stable release.**
 
-### Pre-release downloads (1.0.0-alpha.6)
+### Pre-release downloads (1.0.0-alpha.7)
 
 | Platform | Downloads |
 | --- | --- |
-| **macOS Universal (Intel + Apple Silicon)** | **[PubCraft.app ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-macos-universal.app.zip)** · [DMG app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6.dmg) · [PKG installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6.pkg) · [Portable tools](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-macos.tar.gz) |
-| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-Setup-1.0.0-alpha.6.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-windows-x64.zip) |
-| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-linux-x64.tar.gz) |
+| **macOS Universal (Intel + Apple Silicon)** | **[PubCraft.app ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7-macos-universal.app.zip)** · [DMG app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7.dmg) · [PKG installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7.pkg) · [Portable tools](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7-macos.tar.gz) |
+| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-Setup-1.0.0-alpha.7.exe) · [Portable ZIP](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7-windows-x64.zip) |
+| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7-linux-amd64.deb) · [Portable archive](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/PubCraft-1.0.0-alpha.7-linux-x64.tar.gz) |
 
-[Release notes and all files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.6) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
+[Release notes and all files](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.7) · [SHA-256 checksums](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.7/checksums-sha256.txt) · [Italiano](README.it.md) · [Report a problem](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
 
-Previous pre-release (fallback): [alpha.5 downloads and notes](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.5).
+Previous pre-release (fallback): [alpha.6 downloads and notes](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.6).
 
 **Mac installation:** extract the app ZIP and drag `PubCraft.app` into Applications, or use the DMG as usual. **macOS 13 Ventura or newer; no Rosetta required.** The launcher, CLI, GUI and PDF helper all include both CPU architectures. Quit the old app before replacing it.
 
@@ -41,6 +41,8 @@ The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows ins
 
 ## What's new?
 
+**Alpha.7 (robustness update):** fourteen real defects fixed across the CLI and the GUI, found in a full code-review pass — no new user-facing features. The CLI now writes a real `dcterms:modified` EPUB timestamp, bounds the KDP gutter recalculation (a book on a band boundary can no longer rebuild forever), keeps the `export-md` round-trip faithful (prose lines that merely start with `>`, `-`, a numbered item, `|`, a heading, a fence or an image are no longer re-interpreted as structure), accepts longer front-matter closing lines, accepts legitimate file names like `Part..1.md`, lists archives on Windows, validates the `bleed:` option like the `toc:` ones and hardens the binary-plist parser. The GUI fixes Windows process detection (single-instance reuse and preview cleanup work again), aligns chapter reordering to the open project, extends the CSRF middleware coverage, cleans up the recents filter and gives large builds a 5-minute budget. New C test suites and Go tests lock all of this in.
+
 **Alpha.6 (stability update):** reinforced stability. A consistent section-type policy across the printed TOC, EPUB nav.xhtml and toc.ncx (per-format inclusion matrix, opt-in subheads, unknown types reported as warnings and paginated as normal chapters), CLI/GUI/`book.yaml` loading and validation parity for the `toc:` boolean options, PDF index-page cache keyed on the rendering environment so a changed setup cannot reuse stale page numbers, and a publication guard: a failed candidate PDF build keeps the previously published PDF untouched. The publication preview now warns when source files changed since the last render. The test hygiene pass consolidates 19 browser runners, and the AppImage tooling is pinned to appimagetool 1.9.1.
 
 **Included from alpha.5:** corkboard drag-anywhere and non-destructive folder ↔ `book.yaml` synchronization.
@@ -49,7 +51,7 @@ The app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows ins
 
 **Included from alpha.3:** Universal 2 Mac app and portable tools (Intel + Apple Silicon native, no Rosetta required, macOS 13+ minimum).
 
-See the [alpha.6 notes](RELEASE_NOTES_1.0.0-alpha.6.md), [alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md), [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md), [alpha.6 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md) and the [alpha.5 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
+See the [alpha.7 notes](RELEASE_NOTES_1.0.0-alpha.7.md), [alpha.6 notes](RELEASE_NOTES_1.0.0-alpha.6.md), [alpha.5 notes](RELEASE_NOTES_1.0.0-alpha.5.md), [alpha.4 notes](RELEASE_NOTES_1.0.0-alpha.4.md), [alpha.3 notes](RELEASE_NOTES_1.0.0-alpha.3.md), [full alpha.2 changes](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md), [alpha.7 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.7.md), the [alpha.6 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md) and the [alpha.5 validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
 
 ## Why PubCraft?
 
