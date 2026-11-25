@@ -264,7 +264,10 @@ static int is_safe_chapter_file(const char *v) {
     if (!v || !(L = strlen(v))) return 0;
     if (v[0] == '/' || v[0] == '\\' || v[0] == '.') return 0;
     if (strchr(v, '/') || strchr(v, '\\')) return 0;
-    if (strstr(v, "..")) return 0;
+    /* Niente controllo su ".." come sottostringa: con separatori rifiutati e
+     * primo carattere diverso da '.', nessuna componente può valere "..",
+     * quindi nomi legittimi come "Part..1.md" restano accettati. */
+    if (!strcmp(v, "..")) return 0;
     if (L < 4) return 0;
     const char *dot = strrchr(v, '.');
     if (!dot) return 0;
@@ -726,6 +729,11 @@ static int bp_parse(BP *bp, const unsigned char *b, size_t n) {
             nd->type = N_ARRAY;
             nd->count = L;
             nd->items = malloc((L ? L : 1) * sizeof(uint64_t));
+            if (!nd->items) {
+                /* allocazione fallita su input ostile: nodo nullo, parse tollerante */
+                nd->type = N_NULL; nd->count = 0;
+                break;
+            }
             for (uint64_t k = 0; k < L; k++) nd->items[k] = bp_ref(bp, &p2);
             break;
         }
@@ -740,6 +748,13 @@ static int bp_parse(BP *bp, const unsigned char *b, size_t n) {
             nd->count = L;
             nd->items = malloc((L ? L : 1) * sizeof(uint64_t));
             nd->vals = malloc((L ? L : 1) * sizeof(uint64_t));
+            if (!nd->items || !nd->vals) {
+                /* input di terzi: degrada a nodo nullo senza uscire dal processo */
+                free(nd->items); free(nd->vals);
+                nd->items = NULL; nd->vals = NULL;
+                nd->type = N_NULL; nd->count = 0;
+                break;
+            }
             for (uint64_t k = 0; k < L; k++) nd->items[k] = bp_ref(bp, &p2);
             for (uint64_t k = 0; k < L; k++) nd->vals[k] = bp_ref(bp, &p2);
             break;
@@ -1990,11 +2005,27 @@ static int cmd_info(const char *archive_path) {
 }
 
 static int cmd_list(const char *archive_path) {
+#ifdef _WIN32
+    /* Windows non ha unzip: elenca con PowerShell/.NET. I percorsi passano da
+     * variabili d'ambiente, come in unzip_to, per evitare injection. */
+    const char *old_src = getenv("PUBCRAFT_ZIP_LIST_SOURCE");
+    char *saved_src = old_src ? strdup(old_src) : NULL;
+    SetEnvironmentVariableA("PUBCRAFT_ZIP_LIST_SOURCE", archive_path);
+    int rc = system("powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"$ErrorActionPreference='Stop'; "
+                    "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+                    "$z=[System.IO.Compression.ZipFile]::OpenRead($env:PUBCRAFT_ZIP_LIST_SOURCE); "
+                    "$z.Entries | Sort-Object FullName | ForEach-Object { '{0,10}  {1}' -f $_.Length, $_.FullName }; "
+                    "$z.Dispose()\"");
+    SetEnvironmentVariableA("PUBCRAFT_ZIP_LIST_SOURCE", saved_src);
+    free(saved_src);
+    return rc;
+#else
     char *qv = sh_quote(archive_path);
     char cmd[PATH_MAX + 64];
     snprintf(cmd, sizeof cmd, "unzip -l %s", qv);
     free(qv);
     return system(cmd);
+#endif
 }
 
 static const char *BOOK_CSS =
@@ -2947,8 +2978,16 @@ static int export_epub_book(Book *bk, const char *imgd, const char *outepub, int
     fprintf(opf, "</dc:language>\n");
     if (cover_file)
         fprintf(opf, "<meta name=\"cover\" content=\"cover\"/>\n");
-    fprintf(opf, "<meta property=\"dcterms:modified\">2026-10-20T00:00:00Z</meta>\n"
-                 "</metadata>\n<manifest>\n");
+    {
+        /* EPUB 3 richiede dcterms:modified con l'ora UTC dell'ultima modifica */
+        char mod[32];
+        time_t now = time(NULL);
+        struct tm *gt = gmtime(&now);
+        if (!gt || !strftime(mod, sizeof mod, "%Y-%m-%dT%H:%M:%SZ", gt))
+            snprintf(mod, sizeof mod, "1970-01-01T00:00:00Z");
+        fprintf(opf, "<meta property=\"dcterms:modified\">%s</meta>\n", mod);
+    }
+    fprintf(opf, "</metadata>\n<manifest>\n");
     fprintf(opf, "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n");
     fprintf(opf, "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n");
     for (size_t c = 0; c < bk->nch; c++)
@@ -3118,7 +3157,7 @@ static double kdp_gutter(int pages) {
 
 static int export_print_book(Book *bk, const char *imgd, const char *outdir,
                              double tw, double th, int pages, int bleed, int want_pdf,
-                             const char *pagemap_path, int no_toc_numbers) {
+                             const char *pagemap_path, int no_toc_numbers, int gutter_recalcs) {
     (void)imgd;
     mkdir_p(outdir);
 
@@ -3534,11 +3573,17 @@ static int export_print_book(Book *bk, const char *imgd, const char *outdir,
         printf("PDF generato con %s: %s\n", how, pdf);
         int real_pages = count_pdf_pages(pdf);
         if (real_pages > 0 && kdp_gutter(real_pages) != gutter) {
-            printf("Ricalcolo gutter KDP sulle pagine effettive (%d pag., gutter %.3f in anziche' %.3f in)...\n",
-                   real_pages, kdp_gutter(real_pages), gutter);
-            free(pm); free(tocv);
-            return export_print_book(bk, imgd, outdir, tw, th, real_pages, bleed, want_pdf,
-                                     pagemap_path, no_toc_numbers);
+            if (gutter_recalcs > 0) {
+                printf("Ricalcolo gutter KDP sulle pagine effettive (%d pag., gutter %.3f in anziche' %.3f in)...\n",
+                       real_pages, kdp_gutter(real_pages), gutter);
+                free(pm); free(tocv);
+                return export_print_book(bk, imgd, outdir, tw, th, real_pages, bleed, want_pdf,
+                                         pagemap_path, no_toc_numbers, gutter_recalcs - 1);
+            }
+            /* budget esaurito: la banda oscilla fra due soglie KDP, mi fermo */
+            fprintf(stderr, "avviso: il gutter KDP non converge dopo il numero massimo di ricalcoli "
+                            "(%d pagine, gutter %.3f in); riesegui con --pages aggiornato\n",
+                    real_pages, gutter);
         }
     } else {
         fprintf(stderr, "errore: il motore %s ha fallito la generazione del PDF (rc=%d)\n", how, rc);
@@ -3576,7 +3621,7 @@ static int export_print(const char *archive_path, const char *outdir,
         snprintf(imgd, sizeof imgd, "%s/images", outdir);
         copy_images(tmp, imgd);
         resolve_archive_images(&bk, imgd);
-        rc = export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf, NULL, no_toc_numbers);
+        rc = export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf, NULL, no_toc_numbers, 3);
     }
     rm_rf_path(tmp);
     free(tmp);
@@ -3764,6 +3809,33 @@ static void yaml_scalar_to_buf(const char *s, char *out, size_t cap) {
     out[o] = 0;
 }
 
+/* Vero se la riga verrebbe reinterpretata come struttura dal loader di
+ * load_vault (headings, immagini, citazioni, liste, codice, tabelle). */
+static int md_line_needs_escape(const char *line) {
+    if (!line) return 0;
+    /* blocchi di codice: qualsiasi riga che apre un fence */
+    if (!strncmp(line, "```", 3)) return 1;
+    /* titoli (# .. ####) solo con lo spazio: "#hashtag" resta testo */
+    if (!strncmp(line, "# ", 2) || !strncmp(line, "## ", 3) ||
+        !strncmp(line, "### ", 4) || !strncmp(line, "#### ", 5)) return 1;
+    if (!strncmp(line, "![", 2)) return 1;
+    /* il loader tratta '>' in testa come blockquote, con o senza spazio */
+    if (line[0] == '>') return 1;
+    /* liste non ordinate (con spazio: "*corsivo*" resta corsivo) */
+    if (line[0] == '-' && line[1] == ' ') return 1;
+    if (line[0] == '*' && line[1] == ' ') return 1;
+    if (line[0] == '+' && line[1] == ' ') return 1;
+    /* tabelle */
+    if (line[0] == '|') return 1;
+    /* voci numerate: cifre seguite da '.' o ')' e poi uno spazio */
+    {
+        const char *p = line;
+        while (*p >= '0' && *p <= '9') p++;
+        if (p > line && (*p == '.' || *p == ')') && p[1] == ' ') return 1;
+    }
+    return 0;
+}
+
 /* ---- scrittura vault ---- */
 static int export_md(const char *archive_path, const char *vdir) {
     char *tmp = mk_tmpdir();
@@ -3831,8 +3903,7 @@ static int export_md(const char *archive_path, const char *vdir) {
                     size_t L = e ? (size_t)(e - pp) : strlen(pp);
                     while (L && (pp[L-1] == '\r' || pp[L-1] == ' ' || pp[L-1] == '\t')) L--;
                     if (L) {
-                        if (L >= 3 && (!strncmp(pp, "## ", 3) || !strncmp(pp, "![", 2)))
-                            fputc('\\', f);
+                        if (md_line_needs_escape(pp)) fputc('\\', f);
                         fwrite(pp, 1, L, f);
                         fprintf(f, "\n\n");
                     }
@@ -4551,6 +4622,27 @@ static int ensure_book_uuid(const char *vdir, Book *bk) {
 
 /* ---- lettura vault ---- */
 typedef struct { char *file, *id, *title, *type; } ChEntry;
+/* Trova la riga di chiusura del front matter a inizio documento: una riga
+ * fatta solo di trattini (>=3) con eventuale whitespace ai bordi. Ritorna
+ * l'offset del carattere NEWLINE che la precede, o NULL se assente. */
+static const char *find_frontmatter_close(const char *md) {
+    if (!md) return NULL;
+    const char *nl = strchr(md, '\n'); /* salta la riga di apertura */
+    while (nl) {
+        const char *line = nl + 1;
+        const char *next = strchr(line, '\n');
+        const char *end = next ? next : line + strlen(line);
+        const char *s = line, *e = end;
+        while (s < e && (*s == ' ' || *s == '\t' || *s == '\r')) s++;
+        while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r')) e--;
+        int ok = ((size_t)(e - s) >= 3);
+        for (const char *q = s; ok && q < e; q++)
+            if (*q != '-') ok = 0;
+        if (ok) return nl;
+        nl = next;
+    }
+    return NULL;
+}
 static int load_vault(const char *vdir, Book *bk) {
     memset(bk, 0, sizeof *bk);
     bk->vdir = dupstr(vdir);
@@ -4706,10 +4798,15 @@ static int load_vault(const char *vdir, Book *bk) {
         } else if (!in_ch && !strncmp(l, "bleed:", 6)) {
             char *v = l + 6;
             clean_yaml_val(v);
-            if (!strcasecmp(v, "true") || !strcasecmp(v, "yes") || !strcmp(v, "1"))
-                bk->bleed = 1;
-            else
-                bk->bleed = 0;
+            int bv = 0;
+            int st = yaml_bool_parse(v, &bv);
+            if (st < 0) {
+                fprintf(stderr, "errore: bleed non valido ('%s'): usa true/false, "
+                                "yes/no, on/off, 1/0 (vuoto o null = default)\n", v);
+                toc_bad = 1; /* stessa via di cleanup/uscita di toc.* */
+            } else if (st > 0) {
+                bk->bleed = bv;
+            }
         } else if (in_toc && indent > 0 && !strncmp(l, "subheads:", 9)) {
             char *v = l + 9;
             clean_yaml_val(v);
@@ -4750,8 +4847,8 @@ static int load_vault(const char *vdir, Book *bk) {
         line = strtok(NULL, "\n");
     }
     if (toc_bad) {
-        /* un valore toc non valido è un errore di configurazione: la CLI si
-         * ferma con un messaggio esplicito, come fa la GUI. */
+        /* un valore toc/bleed non valido è un errore di configurazione: la CLI
+         * si ferma con un messaggio esplicito, come fa la GUI. */
         for (size_t k = 0; k < nen; k++) {
             free(ents[k].file); free(ents[k].id); free(ents[k].title); free(ents[k].type);
         }
@@ -4798,7 +4895,7 @@ static int load_vault(const char *vdir, Book *bk) {
         char *fmid = NULL, *fmtitle = NULL, *fmtype = NULL;
         char *body = md;
         if (!strncmp(md, "---", 3)) {
-            char *e = strstr(md + 3, "\n---");
+            char *e = (char *)find_frontmatter_close(md);
             if (e) {
                 *e = 0;
                 for (char *l = strtok(md + 3, "\n"); l; l = strtok(NULL, "\n")) {
@@ -4806,7 +4903,9 @@ static int load_vault(const char *vdir, Book *bk) {
                     else if (!strncmp(l, "title:", 6)) { clean_yaml_val(l + 6); fmtitle = dupstr(l + 6); }
                     else if (!strncmp(l, "type:", 5)) { clean_yaml_val(l + 5); fmtype = dupstr(l + 5); }
                 }
-                body = e + 4;
+                /* il body parte dopo l'intera riga di chiusura (--- o ----) */
+                const char *bnl = strchr(e + 1, '\n');
+                body = (char *)(bnl ? bnl + 1 : e + 1 + strlen(e + 1));
             }
         }
         const char *cid = ents[i].id && ents[i].id[0] ? ents[i].id : fmid;
@@ -4863,7 +4962,16 @@ static int load_vault(const char *vdir, Book *bk) {
              * continuazione lazy vale solo se non c'è stata separazione. */
             int was_blank = prev_blank;
             prev_blank = 0;
-            if (t[0] == '\\' && (t[1] == '#' || t[1] == '!')) t++; /* unescape writer */
+            /* writer e loader sono una coppia: qui si annulla l'escape
+             * applicato da export_md (compatibile con i vecchi \# e \!).
+             * Il flag si calcola UNA sola volta, prima dei rami strutturali:
+             * la riga escapata e' testo puro e non deve essere ri-parsata
+             * come struttura (altrimenti \> diventa comunque una citazione). */
+            int writer_escape = (t[0] == '\\' && md_line_needs_escape(t + 1));
+            if (writer_escape) {
+                t++;
+                goto text_para;   /* la riga escapata resta testo puro */
+            }
             if (!strncmp(t, "```", 3)) {
                 FLUSH_PARA();
                 list_indent_reset(&list_indent);
@@ -5207,10 +5315,10 @@ static int parse_print_opts(int argc, char **argv, int start,
         } else if (!strcmp(opt, "--pages")) {
             *pages = val ? atoi(val) : 0;
             if (*pages < 24) *pages = 24;
-        } else if (!strcmp(argv[i], "--bleed")) *bleed = 1;
-        else if (!strcmp(argv[i], "--no-bleed")) *bleed = 0;
-        else if (!strcmp(argv[i], "--pdf")) *want_pdf = 1;
-        else if (!strcmp(argv[i], "--no-toc-pagenumbers")) {
+        } else if (!strcmp(opt, "--bleed")) *bleed = 1;
+        else if (!strcmp(opt, "--no-bleed")) *bleed = 0;
+        else if (!strcmp(opt, "--pdf")) *want_pdf = 1;
+        else if (!strcmp(opt, "--no-toc-pagenumbers")) {
             if (no_toc_numbers) *no_toc_numbers = 1;
         }
         else if (!strcmp(opt, "--toc-pagemap")) {
@@ -5258,7 +5366,7 @@ static int build_print(const char *vdir, const char *outdir,
     snprintf(fnd, sizeof fnd, "%s/fonts", outdir);
     copy_fonts(vdir, fnd);
     return export_print_book(&bk, imgd, outdir, tw, th, pages, bleed, want_pdf,
-                             pagemap_path, no_toc_numbers);
+                             pagemap_path, no_toc_numbers, 3);
 }
 
 int main(int argc, char **argv) {
