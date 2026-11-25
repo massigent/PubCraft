@@ -2,6 +2,96 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
+## [Unreleased]
+
+### Fixed — CLI (`src/pubcraft.c`)
+
+- **EPUB `dcterms:modified`:** the OPF metadata timestamp is now the actual
+  UTC build time instead of a hard-coded date. EPUB 3 requires the date and
+  time of the last modification; previously every book of every build claimed
+  the same fixed value.
+- **Bounded KDP gutter convergence:** the printed-PDF path (`build-print`/
+  `export-print` with `--pdf`) recalculates margins when the real page count
+  crosses a KDP gutter band. The old implementation recalculated with no
+  bound, so a book sitting on a band boundary could oscillate and rebuild
+  forever. There is now an explicit recalculation budget; when it is exhausted
+  the build stops with a clear warning suggesting `--pages`.
+- **Faithful `export-md` round-trip:** paragraph lines that merely *begin*
+  with Markdown structure (`>`, `- `/`* `/`+ `, numbered items, `|`, fenced
+  code, headings, images) used to be re-interpreted as structure on re-import,
+  silently turning prose into block quotes, lists or code blocks. The writer
+  now escapes all such lines and the loader treats an escaped line as plain
+  text (no re-parsing). Old `\#`/`\!` files remain compatible. Covered by a
+  new end-to-end loader test in `tests/check_core.c` (`loader-unescape`)
+  plus unit checks for the escape predicate (`roundtrip-guards`).
+- **Front matter delimiters:** a closing front-matter line made of more than
+  three dashes (e.g. `----`) no longer corrupts the chapter body (the leftover
+  dash used to turn the first body line into a list item). The closing line
+  is now recognised as a run of dashes with optional surrounding whitespace.
+- **Chapter-name validation:** `is_safe_chapter_file` rejected any file name
+  containing `..` anywhere (e.g. `Part..1.md`). Separators and leading dots
+  are already rejected, so no path component can ever be `..`; legitimate
+  double-dot names are accepted again, with the safety chain documented
+  inline and unit-tested.
+- **`cmd_list` on Windows:** the archive listing now uses PowerShell/.NET
+  (`System.IO.Compression.ZipFile`) like the rest of the Windows code path,
+  instead of shelling out to a Unix `unzip` that does not exist there.
+- **Boolean `bleed:` option:** `book.yaml` `bleed:` now uses the same tolerant
+  boolean grammar as `toc.subheads`/`toc.pagenumbers` (`true/false`, `yes/no`,
+  `on/off`, `1/0`), and an invalid value fails the build with an explicit
+  error instead of silently defaulting to `false`.
+- **`--option=value` print flags:** `--bleed`, `--no-bleed`, `--pdf` and
+  `--no-toc-pagenumbers` now accept the `--flag=value` form, consistently with
+  `--trim`/`--pages`/`--toc-pagemap`.
+- **Hardened binary-plist parser:** the `0xA`/`0xD` (array/dictionary) node
+  allocations are now checked before writing; a malformed third-party
+  archive degrades to a null node instead of risking a crash.
+
+### Fixed — GUI (`src/pubcraftgui`)
+
+- **Process existence on Windows:** `processExists` relied on
+  `Process.Signal(syscall.Signal(0))`, which always fails on Windows. Among
+  other things this broke the single-instance launcher (a live instance was
+  always considered dead) and made the preview-directory janitor delete the
+  preview folders of *other running instances*. Windows now probes with
+  `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` via the standard library,
+  treating access-denied as "exists" (`process_windows.go`, build-tagged;
+  the Unix implementation is unchanged in `process_unix.go` with a unit test).
+- **Project alignment for chapter reordering:** `apiReorder` now honours the
+  `X-PubCraft-Vault` header (already sent by the web client for every
+  mutation) and rejects with 409 a reorder request that belongs to another
+  open project, like `apiSave` and `apiBuild` already did. Clients without the
+  header keep working.
+- **CSRF coverage:** the security middleware now also requires POST + JSON on
+  `/api/publication-preview`, the recents/workspace mutation endpoints, and
+  guards the only GET endpoint with side effects (`/api/watch/pdf?rebuild=1`)
+  against cross-site embedding via the `Sec-Fetch-Site` header. Requests
+  without the header (non-browser tools) remain allowed; the limitation is
+  documented inline. New tests cover both behaviours
+  (`endpoint_hardening_test.go`).
+- **Recent-projects hygiene:** the recents filter no longer excludes paths via
+  hard-coded test-specific patterns (`/var/folders/`, `pubcraft-tests-`, …)
+  which could also exclude real user vaults; it now skips only vaults inside
+  the system temporary directory plus the explicit `PUBCRAFT_TESTING` gate.
+- **Build timeout:** CLI invocations now get a 5-minute budget (configurable
+  via `runToolTimeout`) instead of a fixed 120 s, so large illustrated books
+  on slow disks no longer fail mid-build.
+
+### Validation of this round
+
+All changes passed, on Linux x64: `gcc -Wall -Wextra -fsyntax-only`, the C
+internal checks (`tests/check_core.c`: TOC policy, round-trip guards,
+loader unescape), the CLI shell suite (`tests/test_cli.sh`), `go vet` on
+Linux and Windows, the uncached Go suite (`go test -race -count=1`),
+cross-compilation for linux/amd64, windows/amd64, darwin/amd64 and
+darwin/arm64 (compile checks only), the Python release-guard tests and
+`check_release_version.py`, plus a manual end-to-end round-trip smoke on a
+real vault. Not executed here by design: the full browser suite (requires a
+Chromium remote-debugging instance), native Windows/macOS runs, and
+`check_packages.py` (release artifacts). The macOS launcher `openFiles:`
+ordering and `cmd.exe` quoting for exotic paths remain flagged for native
+verification on macOS/Windows.
+
 ## [1.0.0-alpha.6]
 
 ### Changed — improved stability
