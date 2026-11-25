@@ -9,23 +9,19 @@ PubCraft è gratuito e open source: editor locale nel browser, compilatore CLI i
 [![CI](https://github.com/massigent/PubCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/massigent/PubCraft/actions/workflows/ci.yml)
 [![Licenza MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Ultima versione pubblicata: 1.0.0-alpha.5 — app Mac universale, nativa su Intel e Apple Silicon.**
+**Ultima pre-release: 1.0.0-alpha.6 — aggiornamento di stabilità. Software alfa, non una release stabile.**
 
-> **In preparazione — 1.0.0-alpha.6 (candidata, NON ancora pubblicata):** questo ramo di
-> sviluppo contiene i sorgenti e la documentazione della prossima alfa 6. Non è ancora una
-> release: nessun download, tag o pacchetto esiste per la alfa 6 finché non completa il
-> ciclo di validazione. Continuate a usare i download alfa 5 qui sotto; restano la versione
-> pubblicata più recente.
-
-### Download (pubblicata: 1.0.0-alpha.5)
+### Download pre-release (1.0.0-alpha.6)
 
 | Sistema | Download |
 | --- | --- |
-| **macOS Universal (Intel + Apple Silicon)** | **[ZIP di PubCraft.app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-macos-universal.app.zip)** · [App DMG](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5.dmg) · [Installer PKG](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5.pkg) · [Strumenti portatili](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-macos.tar.gz) |
-| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-Setup-1.0.0-alpha.5.exe) · [ZIP portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-windows-x64.zip) |
-| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-linux-amd64.deb) · [Archivio portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/PubCraft-1.0.0-alpha.5-linux-x64.tar.gz) |
+| **macOS Universal (Intel + Apple Silicon)** | **[ZIP di PubCraft.app](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-macos-universal.app.zip)** · [App DMG](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6.dmg) · [Installer PKG](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6.pkg) · [Strumenti portatili](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-macos.tar.gz) |
+| Windows x64 | [Installer](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-Setup-1.0.0-alpha.6.exe) · [ZIP portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-windows-x64.zip) |
+| Linux x64 | [AppImage](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-x86_64.AppImage) · [Debian/Ubuntu](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-linux-amd64.deb) · [Archivio portatile](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/PubCraft-1.0.0-alpha.6-linux-x64.tar.gz) |
 
-[Note e tutti i file](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.5) · [Checksum SHA-256](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.5/checksums-sha256.txt) · [English](README.md) · [Segnala un problema](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
+[Note e tutti i file](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.6) · [Checksum SHA-256](https://github.com/massigent/PubCraft/releases/download/v1.0.0-alpha.6/checksums-sha256.txt) · [English](README.md) · [Segnala un problema](https://github.com/massigent/PubCraft/issues/new?template=bug_report.md)
+
+Pre-release precedente (ripiego): [download e note alfa 5](https://github.com/massigent/PubCraft/releases/tag/v1.0.0-alpha.5).
 
 **Installazione Mac:** estrai il ZIP e trascina `PubCraft.app` in Applicazioni, oppure usa il DMG come prima. **Richiede macOS 13 Ventura o successivo; Rosetta non serve.** Launcher, compilatore, GUI e helper PDF contengono entrambi i tipi di processore. Chiudi la vecchia app prima di sostituirla.
 
@@ -45,7 +41,7 @@ L'app ha una firma ad-hoc, non una firma Developer ID/notarizzazione Apple; PKG 
 
 ## Novità
 
-**Alfa 6 (in preparazione, candidata):** stabilità rafforzata. Politica coerente per i tipi di sezione nelle tre varianti di indice (stampa, nav.xhtml EPUB e toc.ncx: matrice di inclusione per formato, sottocapi opt-in, tipi sconosciuti segnalati con avviso e impaginati come capitoli normali), parità CLI/GUI/`book.yaml` nel caricamento e nella validazione dei booleani `toc:`, cache delle pagine dell'indice PDF legata all'ambiente di rendering (un ambiente cambiato non riutilizza numeri di pagina obsoleti) e una guardia di pubblicazione: un build PDF candidato fallito lascia intatto il PDF pubblicato precedente. L'anteprima di pubblicazione avvisa quando i file sorgente sono cambiati dall'ultimo render. La suite dei test del browser è stata consolidata in 19 runner con un passaggio di igiene dei test; il tool AppImage è fissato a appimagetool 1.9.1.
+**Alfa 6 (aggiornamento di stabilità):** stabilità rafforzata. Politica coerente per i tipi di sezione nelle tre varianti di indice (stampa, nav.xhtml EPUB e toc.ncx: matrice di inclusione per formato, sottocapi opt-in, tipi sconosciuti segnalati con avviso e impaginati come capitoli normali), parità CLI/GUI/`book.yaml` nel caricamento e nella validazione dei booleani `toc:`, cache delle pagine dell'indice PDF legata all'ambiente di rendering (un ambiente cambiato non riutilizza numeri di pagina obsoleti) e una guardia di pubblicazione: un build PDF candidato fallito lascia intatto il PDF pubblicato precedente. L'anteprima di pubblicazione avvisa quando i file sorgente sono cambiati dall'ultimo render. La suite dei test del browser è stata consolidata in 19 runner con un passaggio di igiene dei test; il tool AppImage è fissato a appimagetool 1.9.1.
 
 **Incluse dall'alfa 5:** trascinamento libero della Lavagna e sincronizzazione non distruttiva cartella ↔ `book.yaml`.
 
@@ -53,7 +49,7 @@ L'app ha una firma ad-hoc, non una firma Developer ID/notarizzazione Apple; PKG 
 
 **Incluse dall'alfa 3:** `PubCraft.app` e strumenti Mac Universal 2 (Intel + Apple Silicon nativo, senza Rosetta, macOS 13+ minimo).
 
-Consulta [note alfa 6 in preparazione](RELEASE_NOTES_1.0.0-alpha.6.md) (candidata, non ancora pubblicata), [note alfa 5](RELEASE_NOTES_1.0.0-alpha.5.md), [note alfa 4](RELEASE_NOTES_1.0.0-alpha.4.md), [note alfa 3](RELEASE_NOTES_1.0.0-alpha.3.md), [modifiche complete alfa 2](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md), [validazione alfa 6](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md) e [validazione alfa 5](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
+Consulta [note alfa 6](RELEASE_NOTES_1.0.0-alpha.6.md), [note alfa 5](RELEASE_NOTES_1.0.0-alpha.5.md), [note alfa 4](RELEASE_NOTES_1.0.0-alpha.4.md), [note alfa 3](RELEASE_NOTES_1.0.0-alpha.3.md), [modifiche complete alfa 2](RELEASE_NOTES_1.0.0-alpha.2.md), [changelog](CHANGELOG.md), [validazione alfa 6](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md) e [validazione alfa 5](docs/RELEASE_VALIDATION_1.0.0-alpha.5.md).
 
 ## Perché PubCraft?
 

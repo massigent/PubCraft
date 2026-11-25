@@ -2,7 +2,7 @@
 
 PubCraft is pre-release software. Entries describe changes relative to the previous public tag, not a promise of distributor certification or perfect conversion of every manuscript.
 
-## [1.0.0-alpha.6] — in preparation, not yet published
+## [1.0.0-alpha.6]
 
 ### Changed — improved stability
 
@@ -30,19 +30,23 @@ PubCraft is pre-release software. Entries describe changes relative to the previ
 
 ### Honest status
 
-The **local** alpha.6 build/test cycle has passed on this branch: `make check` with uncached
-Go tests (`-race -count=1`), `go vet`, C core checks (TOC-policy table), the CLI test suite,
-Python release-guard tests, PDF end-to-end render tests, the full 19-runner browser suite and
-`check_release_version.py`. A few tests are skipped for environmental reasons only (external
-Scrivener template fixture, optional local renderer/helper tests, and the macOS-only WebKit
-geometry E2E test, which is skipped on non-macOS hosts by design).
+This is a validated pre-release (alpha), not a GA/stable release and not a claim of distributor
+compliance. The alpha.6 sources (commit `34f309e`) passed the full local cycle (`make check`
+with uncached Go tests `-race -count=1`, `go vet`, C core checks, CLI suite, Python
+release-guard tests, PDF E2E render tests, the 19-runner browser suite and
+`check_release_version.py`) and all 5 native release-build/package jobs (run
+[45497549137](https://github.com/massigent/PubCraft/actions/runs/45497549137): Linux x64 on
+Ubuntu 22.04, Windows x64 native, one Universal 2 macOS artifact set and two dependent native
+macOS jobs on Intel and Apple Silicon verifying the same package bytes, both slices,
+signatures and source revision). `main` CI passed on the same revision
+([45499319137](https://github.com/massigent/PubCraft/actions/runs/45499319137)).
+A few tests are skipped for environmental reasons only (external Scrivener template fixture,
+and the macOS-only WebKit geometry E2E test, skipped on non-macOS hosts by design).
 
-Alpha.6 is still a candidate, **not a published release**: native Linux/Windows package tests
-and the native macOS package cycle are pending, and no alpha.6 tag, package or asset exists.
-Published alpha.5 Windows packages passed native Windows CI; only the local development
-Windows packages created during this session, before the version bump, were cross-build-checked.
-
-Details: [bilingual alpha.6 preparation notes](RELEASE_NOTES_1.0.0-alpha.6.md).
+The macOS app is ad-hoc signed, not Developer ID signed/notarized; PKG and Windows installers
+are not publisher-signed. No RPM package is provided. Details:
+[bilingual alpha.6 notes](RELEASE_NOTES_1.0.0-alpha.6.md) and the
+[validation record](docs/RELEASE_VALIDATION_1.0.0-alpha.6.md).
 
 ## [1.0.0-alpha.5]
 
